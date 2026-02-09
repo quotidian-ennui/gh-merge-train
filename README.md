@@ -60,6 +60,6 @@ env:
 
 There are reasons for the `GH_MERGE_TRAIN_BOT_LABEL` and `GH_MERGE_TRAIN_DEPENDABOT_REBASE` environment variables
 
-`GH_MERGE_TRAIN_BOT_LABEL` is because we did not want dependabot to trigger expensive builds; we only want to run the expensive builds after we have reviewed the dependency before merging. Dependabot _can be quite eager_ about rebasing; so this avoids a chain of expensive builds that run without our intervention.
+`GH_MERGE_TRAIN_BOT_LABEL` is because we did not want dependabot to trigger expensive builds; we only want to run the expensive builds after we have reviewed the dependency before merging. Dependabot _can be quite eager_ about rebasing so this avoids a chain of expensive builds that run without our intervention.
 
-`GH_MERGE_TRAIN_DEPENDABOT_REBASE` is because, dependabot can do a _more appropriate_ when attempting to update a PR; it's subtly better than trying to do a `gh pr update-branch --rebase` in some usecases. If you are finding that, then setting this flag to be true will be your friend but you are going to be beholden to dependabot's scheduling.
+`GH_MERGE_TRAIN_DEPENDABOT_REBASE` is because, dependabot can do a _more appropriate thing_ when attempting to update a PR; it's subtly better than trying to do a `gh pr update-branch --rebase` in some usecases. If you are finding that, then setting this flag to be true will be your friend but you are going to be beholden to dependabot's scheduling.
