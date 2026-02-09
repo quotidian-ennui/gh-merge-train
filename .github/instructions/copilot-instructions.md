@@ -3,3 +3,4 @@
 - Explain the "why" behind recommendations.
 - Always prioritize security vulnerabilities and performance issues that could impact users.
 - Never suggest changes to improve readability.
+- Never suggest changes related to platform variants for GNU tooling

@@ -15,6 +15,7 @@ Thus a fake merge-train was born. It's of marginal use if your actions are fast,
 ## Installation
 
 - [GitHub CLI](https://cli.github.com/) is already installed and authenticated
+- [jq](https://stedolan.github.io/jq/) is installed
 - [gh-squash-merge](https://github.com/quotidian-ennui/gh-squash-merge) extension
 - `gh extension install quotidian-ennui/gh-merge-train`
 
@@ -23,7 +24,7 @@ Thus a fake merge-train was born. It's of marginal use if your actions are fast,
 ```text
 bsh ❯ gh merge-train
 
-Usage: gh merge-train [flags] [pr_number...]
+Usage: gh merge-train [flags] [pr...]
 
 This is a fake merge train that rebases, approves, and squash-merges each argument
 
@@ -62,4 +63,4 @@ There are reasons for the `GH_MERGE_TRAIN_BOT_LABEL` and `GH_MERGE_TRAIN_DEPENDA
 
 `GH_MERGE_TRAIN_BOT_LABEL` is because we did not want dependabot to trigger expensive builds; we only want to run the expensive builds after we have reviewed the dependency before merging. Dependabot _can be quite eager_ about rebasing so this avoids a chain of expensive builds that run without our intervention.
 
-`GH_MERGE_TRAIN_DEPENDABOT_REBASE` is because, dependabot can do a _more appropriate thing_ when attempting to update a PR; it's subtly better than trying to do a `gh pr update-branch --rebase` in some usecases. If you are finding that, then setting this flag to be true will be your friend but you are going to be beholden to dependabot's scheduling.
+`GH_MERGE_TRAIN_DEPENDABOT_REBASE` is because dependabot can do a _more appropriate thing_ when attempting to update a PR; it's subtly better than trying to do a `gh pr update-branch --rebase` in some use cases. If you are finding that, then setting this flag to be true will be your friend but you are going to be beholden to dependabot's scheduling.

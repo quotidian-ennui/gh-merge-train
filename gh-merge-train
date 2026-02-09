@@ -11,6 +11,7 @@ POLL_INTERVAL_SECS=${GH_POLL_INTERVAL_SECS:-30}
 GH_MERGE_TRAIN_REBASE="true"
 GH_MERGE_TRAIN_MAX_ATTEMPTS=${GH_MERGE_TRAIN_MAX_ATTEMPTS:-5}
 GH_MERGE_TRAIN_BOT_LABEL=${GH_MERGE_TRAIN_BOT_LABEL:-}
+GH_MERGE_TRAIN_DEPENDABOT_REBASE=${GH_MERGE_TRAIN_DEPENDABOT_REBASE:-}
 
 #shellcheck disable=SC2154
 usage() {
@@ -44,17 +45,6 @@ env:
   GH_MERGE_TRAIN_DEPENDABOT_REBASE : [$GH_MERGE_TRAIN_DEPENDABOT_REBASE] : optional use dependabot chat-ops to rebase if appropriate.
 EOF
   exit "$exit"
-}
-
-# Because I often just use GH_TOKEN, and don't have 'gh config get user' available.
-# This is _weak_ but it will work for my purposes.
-gh_whoami() {
-  local me=""
-  me=$(gh config get user -h github.com 2>/dev/null || true)
-  if [[ -z "$me" ]]; then
-    me=$(gh auth status -h github.com | grep "Logged in" | sed -e "s/^[[:blank:]]*//" -e "s/[[:blank:]]*$//" | cut -f7 -d ' ')
-  fi
-  echo "$me"
 }
 
 __is_bot() {
@@ -121,7 +111,7 @@ __approve_if_not_author() {
   local me=""
 
   me=$(gh_whoami)
-  pr_author="$(gh pr view "$pr" --json "author" | jq -r '.author.login')"
+  pr_author="$(gh pr view "$pr_number" --json "author" | jq -r '.author.login')"
   echo "ℹ️ PR Authored by $pr_author"
   if [[ "$me" != "$pr_author" ]]; then
     if ! gh pr review --approve "$pr_number"; then
@@ -149,10 +139,10 @@ __update_branch() {
     if __is_dependabot "$pr_number"; then
       echo "ℹ️ Update branch using @dependabot rebase"
       if ! gh pr comment "$pr_number" --body "@dependabot rebase"; then
-        echo "  Failed to rebase via comment dependabot comment"
+        echo "⚠️ Failed to rebase via comment dependabot comment"
         exit 1
       fi
-      while [[ $(__merge_status "$pr") =~ ^BEHIND|DIRTY$ ]]; do
+      while [[ $(__merge_status "$pr_number") =~ ^(BEHIND|DIRTY)$ ]]; do
         updateCount=$((updateCount + 1))
         if [[ "$updateCount" -ge "$GH_MERGE_TRAIN_MAX_ATTEMPTS" ]]; then
           echo -e "\n🚫 Branch update failed too many times"
@@ -222,7 +212,7 @@ __update_branch() {
       continue
     fi
     echo "ℹ️ Working on $url"
-    if [[ $(__merge_status "$pr") =~ ^BEHIND|DIRTY$ ]]; then
+    if [[ $(__merge_status "$pr") =~ ^(BEHIND|DIRTY)$ ]]; then
       __update_branch "$pr"
       # sad but sometimes the checks don't start quick enough
       sleep "$POLL_INTERVAL_SECS"
