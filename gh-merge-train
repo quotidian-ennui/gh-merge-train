@@ -1,0 +1,223 @@
+#!/usr/bin/env bash
+#
+set -eo pipefail
+
+export GH_PAGER="cat"
+
+BASEDIR=$(dirname "$(realpath "$0")")
+#shellcheck disable=SC1091
+source "$BASEDIR/includes/common.sh"
+POLL_INTERVAL_SECS=${GH_POLL_INTERVAL_SECS:-30}
+GH_MERGE_TRAIN_REBASE="true"
+GH_MERGE_TRAIN_MAX_ATTEMPTS=${GH_MERGE_TRAIN_MAX_ATTEMPTS:-5}
+GH_MERGE_TRAIN_BOT_LABEL=${GH_MERGE_TRAIN_BOT_LABEL:-}
+GH_MERGE_TRAIN_DEPENDABOT_REBASE=${GH_MERGE_TRAIN_DEPENDABOT_REBASE:-}
+
+#shellcheck disable=SC2154
+usage() {
+  local exit=${1:-1}
+  cat <<EOF
+
+Usage: gh merge-train [flags] [pr...]
+
+This is a fake merge train that rebases, approves, and squash-merges each argument
+
+In effect it takes some toil out of your life because we end up with this:
+
+gh-merge-train 25 26 27
+for PR in 25 26 27 do
+  gh pr update-branch PR --rebase
+  while in_progress do
+    gh pr checks PR --json "state,name" | jq -c ".[]" etc.
+  done
+  if success then
+    gh pr review --approve PR
+    gh squash-merge PR --use-default-msg
+  fi
+done
+
+Flags
+  -m, --merge merge rather than rebase when updating the pr branch
+
+env:
+  GH_MERGE_TRAIN_MAX_ATTEMPTS      : [$GH_MERGE_TRAIN_MAX_ATTEMPTS] : how many times to attempt an update
+  GH_MERGE_TRAIN_BOT_LABEL         : [$GH_MERGE_TRAIN_BOT_LABEL] : optional label to apply to a bot PR.
+  GH_MERGE_TRAIN_DEPENDABOT_REBASE : [$GH_MERGE_TRAIN_DEPENDABOT_REBASE] : optional use dependabot chat-ops to rebase if appropriate.
+EOF
+  exit "$exit"
+}
+
+__is_bot() {
+  local pr_number=$1
+  local is_bot="false"
+  is_bot=$(gh pr view "$pr_number" --json "author" --jq ".author.is_bot")
+  if [[ "$is_bot" == "true" ]]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+__is_dependabot() {
+  local pr_number=$1
+  local is_dependabot=""
+  is_dependabot=$(gh pr view "$pr_number" --json "author" --jq ".author.login")
+  if [[ "$is_dependabot" == "app/dependabot" ]]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+__pr_view_field() {
+  local field="$1"
+  local pr_number="$2"
+  gh pr view "$pr_number" --json "$field" --jq ".$field"
+}
+
+__merge_status() {
+  local pr_number=$1
+  __pr_view_field mergeStateStatus "$pr_number"
+}
+
+__bot_squash_merge_param() {
+  local pr_number=$1
+  if __is_bot "$pr_number"; then
+    echo "--use-default-msg"
+  else
+    echo ""
+  fi
+}
+
+__label_if_bot() {
+  local pr_number=$1
+  if __is_bot "$pr_number"; then
+    if [[ -n "$GH_MERGE_TRAIN_BOT_LABEL" ]]; then
+      echo "ℹ️ Applying label $GH_MERGE_TRAIN_BOT_LABEL"
+      gh pr edit "$pr_number" --add-label "$GH_MERGE_TRAIN_BOT_LABEL"
+    fi
+  fi
+}
+
+__wait_for_checks() {
+  local pr_number="$1"
+  echo "🔎 ...waiting for checks to complete using gh pr checks"
+  gh pr checks "$pr_number" --watch --fail-fast --interval "$POLL_INTERVAL_SECS"
+}
+
+__approve_if_not_author() {
+  local pr_number="$1"
+  local pr_author=""
+  local me=""
+
+  me=$(gh_whoami)
+  pr_author="$(gh pr view "$pr_number" --json "author" | jq -r '.author.login')"
+  echo "ℹ️ PR Authored by $pr_author"
+  if [[ "$me" != "$pr_author" ]]; then
+    if ! gh pr review --approve "$pr_number"; then
+      echo "⚠️ Failed to approve, this might not matter. If it does then gh squash-merge should break..."
+    fi
+  else
+    echo "👀 Not going to try and approve your own PR!"
+  fi
+}
+
+__approve_then_merge() {
+  local pr_number="$1"
+  __approve_if_not_author "$pr_number"
+  gh squash-merge "$pr_number" "$(__bot_squash_merge_param "$pr_number")"
+}
+
+__update_branch() {
+  local pr_number="$1"
+  local updateCount=0
+  local update_args=()
+
+  __label_if_bot "$pr_number"
+
+  if [[ "$GH_MERGE_TRAIN_DEPENDABOT_REBASE" == "true" ]]; then
+    if __is_dependabot "$pr_number"; then
+      echo "ℹ️ Update branch using @dependabot rebase"
+      if ! gh pr comment "$pr_number" --body "@dependabot rebase"; then
+        echo "⚠️ Failed to rebase via comment dependabot comment"
+        exit 1
+      fi
+      while [[ $(__merge_status "$pr_number") =~ ^(BEHIND|DIRTY)$ ]]; do
+        updateCount=$((updateCount + 1))
+        if [[ "$updateCount" -ge "$GH_MERGE_TRAIN_MAX_ATTEMPTS" ]]; then
+          echo -e "\n🚫 Branch update failed too many times"
+          exit 1
+        else
+          echo "Waiting on dependabot to catch up for $POLL_INTERVAL_SECS seconds..."
+          sleep "$POLL_INTERVAL_SECS"
+        fi
+      done
+      return
+    fi
+  fi
+
+  if [[ "$GH_MERGE_TRAIN_REBASE" == "true" ]]; then
+    update_args+=("--rebase")
+  fi
+
+  #shellcheck disable=SC2145
+  echo "ℹ️ Update branch using gh pr update-branch $pr_number ${update_args[@]}"
+  while ! gh pr update-branch "$pr_number" "${update_args[@]}"; do
+    updateCount=$((updateCount + 1))
+    if [[ "$updateCount" -ge "$GH_MERGE_TRAIN_MAX_ATTEMPTS" ]]; then
+      echo -e "\n🚫 Branch update failed too many times"
+      exit 1
+    else
+      echo "Update failed. Retrying in $POLL_INTERVAL_SECS seconds..."
+      sleep "$POLL_INTERVAL_SECS"
+    fi
+  done
+}
+
+{
+  ARGS=$(getopt --options 'mh' --longoptions 'merge,help' -- "${@}")
+  eval "set -- ${ARGS}"
+  while true; do
+    case "${1}" in
+    --merge | -m)
+      GH_MERGE_TRAIN_REBASE="false"
+      shift
+      ;;
+    -h | --help)
+      usage "0"
+      ;;
+    --)
+      shift
+      break
+      ;;
+    *)
+      usage
+      ;;
+    esac
+  done
+  if [[ "$#" -eq 0 ]]; then
+    usage
+  fi
+
+  first="true"
+
+  for pr in "$@"; do
+    if [[ "$first" != "true" ]]; then
+      sleep "$POLL_INTERVAL_SECS"
+    fi
+    first="false"
+    url="$(__pr_view_field url "$pr")"
+    if [[ $(__pr_view_field state "$pr") == "MERGED" ]]; then
+      echo "ℹ️ Skipping $url already merged"
+      continue
+    fi
+    echo "ℹ️ Working on $url"
+    if [[ $(__merge_status "$pr") =~ ^(BEHIND|DIRTY)$ ]]; then
+      __update_branch "$pr"
+      # sad but sometimes the checks don't start quick enough
+      sleep "$POLL_INTERVAL_SECS"
+    fi
+    __wait_for_checks "$pr"
+    __approve_then_merge "$pr"
+  done
+}
