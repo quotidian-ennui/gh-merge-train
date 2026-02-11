@@ -210,12 +210,12 @@ __update_branch() {
       continue
     fi
     echo "ℹ️ Working on $url"
-    __label_if_bot "$pr"
     if [[ $(__merge_status "$pr") =~ ^(BEHIND|DIRTY)$ ]]; then
       __update_branch "$pr"
       # sad but sometimes the checks don't start quick enough
       sleep "$POLL_INTERVAL_SECS"
     fi
+    __label_if_bot "$pr"
     __wait_for_checks "$pr"
     __approve_then_merge "$pr"
   done
