@@ -133,8 +133,6 @@ __update_branch() {
   local updateCount=0
   local update_args=()
 
-  __label_if_bot "$pr_number"
-
   if [[ "$GH_MERGE_TRAIN_DEPENDABOT_REBASE" == "true" ]]; then
     if __is_dependabot "$pr_number"; then
       echo "ℹ️ Update branch using @dependabot rebase"
@@ -212,6 +210,7 @@ __update_branch() {
       continue
     fi
     echo "ℹ️ Working on $url"
+    __label_if_bot "$pr"
     if [[ $(__merge_status "$pr") =~ ^(BEHIND|DIRTY)$ ]]; then
       __update_branch "$pr"
       # sad but sometimes the checks don't start quick enough
