@@ -14,7 +14,7 @@
 
 ## Script Structure
 
-- Start with a clear shebang: `#!/bin/bash` unless specified otherwise
+- Start with a clear shebang: `#!/usr/bin/env bash` unless specified otherwise
 - Include a header comment explaining the script's purpose
 - Define default values for all variables at the top
 - Use functions for reusable code blocks
@@ -28,3 +28,11 @@
 - Quote jq/yq filters to prevent shell expansion and prefer `--raw-output` when you need plain strings
 - Treat parser errors as fatal: combine with `set -euo pipefail` or test command success before using results
 - Document parser dependencies at the top of the script and fail fast with a helpful message if `jq`/`yq` (or alternative tools) are required but not installed
+
+## Pull request behaviour
+
+- When editing or creating a pull request ensure the PR title is a conventional commit message
+- When editing or creating a pull request use markdown lists to write a short summary of the changes inside the `SQUASH_MERGE` markers
+- Ensure the each line between the SQUASH_MERGE markers are less than 80 characters but complete.
+- Ensure that a detailed summary of changes exists under a new heading `Copilot changes` that is separate to the existing `Changes` block
+- When a pull request fixes an issue, ensure that it uses the phrase `resolves` and then the issue number.
