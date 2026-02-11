@@ -140,7 +140,7 @@ __update_branch() {
         echo "⚠️ Failed to rebase via comment dependabot comment"
         exit 1
       fi
-      while [[ $(__merge_status "$pr_number") =~ ^(BEHIND|DIRTY)$ ]]; do
+      while [[ ! $(__merge_status "$pr_number") =~ ^(CLEAN|BLOCKED)$ ]]; do
         updateCount=$((updateCount + 1))
         if [[ "$updateCount" -ge "$GH_MERGE_TRAIN_MAX_ATTEMPTS" ]]; then
           echo -e "\n🚫 Branch update failed too many times"
@@ -210,7 +210,7 @@ __update_branch() {
       continue
     fi
     echo "ℹ️ Working on $url"
-    if [[ $(__merge_status "$pr") =~ ^(BEHIND|DIRTY)$ ]]; then
+    if [[ ! $(__merge_status "$pr") =~ ^(CLEAN|BLOCKED)$ ]]; then
       __update_branch "$pr"
       # sad but sometimes the checks don't start quick enough
       sleep "$POLL_INTERVAL_SECS"
