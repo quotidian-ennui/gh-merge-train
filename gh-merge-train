@@ -91,8 +91,8 @@ __bot_squash_merge_param() {
 
 __label_if_bot() {
   local pr_number=$1
-  if __is_bot "$pr_number"; then
-    if [[ -n "$GH_MERGE_TRAIN_BOT_LABEL" ]]; then
+  if [[ -n "$GH_MERGE_TRAIN_BOT_LABEL" ]]; then
+    if __is_bot "$pr_number"; then
       echo "ℹ️ Applying label $GH_MERGE_TRAIN_BOT_LABEL"
       gh pr edit "$pr_number" --add-label "$GH_MERGE_TRAIN_BOT_LABEL"
     fi
