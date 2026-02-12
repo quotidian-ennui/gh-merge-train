@@ -86,6 +86,7 @@ __extract_squash_merge_message() {
   local message=""
   
   body=$(gh pr view "$pr_number" --json "body" --jq ".body")
+  # Extract content between markers; if markers don't exist, returns empty string (which is fine)
   message=$(echo "$body" | awk '/SQUASH_MERGE_START/,/SQUASH_MERGE_END/' | { grep -v "SQUASH_MERGE" || test $? = 1; })
   
   echo "$message"
@@ -97,8 +98,8 @@ __bot_squash_merge_param() {
     local squash_message=""
     squash_message=$(__extract_squash_merge_message "$pr_number")
     
-    # If there's a viable squash-merge message (non-empty after trimming), don't use default message
-    if [[ -n "${squash_message// /}" ]]; then
+    # If there's a viable squash-merge message (non-empty after trimming all whitespace), don't use default message
+    if [[ -n $(echo "$squash_message" | tr -d '[:space:]') ]]; then
       echo ""
     else
       echo "--use-default-msg"
