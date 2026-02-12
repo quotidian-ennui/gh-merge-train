@@ -80,10 +80,29 @@ __merge_status() {
   __pr_view_field mergeStateStatus "$pr_number"
 }
 
+__extract_squash_merge_message() {
+  local pr_number=$1
+  local body=""
+  local message=""
+  
+  body=$(gh pr view "$pr_number" --json "body" --jq ".body")
+  message=$(echo "$body" | awk '/SQUASH_MERGE_START/,/SQUASH_MERGE_END/' | { grep -v "SQUASH_MERGE" || test $? = 1; })
+  
+  echo "$message"
+}
+
 __bot_squash_merge_param() {
   local pr_number=$1
   if __is_bot "$pr_number"; then
-    echo "--use-default-msg"
+    local squash_message=""
+    squash_message=$(__extract_squash_merge_message "$pr_number")
+    
+    # If there's a viable squash-merge message (non-empty after trimming), don't use default message
+    if [[ -n "${squash_message// /}" ]]; then
+      echo ""
+    else
+      echo "--use-default-msg"
+    fi
   else
     echo ""
   fi
