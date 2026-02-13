@@ -33,6 +33,6 @@
 
 - When editing or creating a pull request ensure the PR title is a conventional commit message
 - When editing or creating a pull request use markdown lists to write a short summary of the changes inside the `SQUASH_MERGE` markers
-- Ensure the each line between the SQUASH_MERGE markers are less than 80 characters but complete.
+- Ensure the each line between the SQUASH_MERGE markers are less than 80 characters but complete sentences.
 - Ensure that a detailed summary of changes exists under a new heading `Copilot changes` that is separate to the existing `Changes` block
-- When a pull request fixes an issue, ensure that it uses the phrase `resolves` and then the issue number.
+- When working on a pull request based on an issue add a "Resolves #issue number" to the PR description under the Motivation heading
