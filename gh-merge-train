@@ -89,8 +89,8 @@ __extract_squash_merge_message() {
   
   # Check if both markers exist before extraction
   if echo "$body" | grep -q "SQUASH_MERGE_START" && echo "$body" | grep -q "SQUASH_MERGE_END"; then
-    # Extract content between markers, excluding the exact marker lines
-    message=$(echo "$body" | awk '/SQUASH_MERGE_START/,/SQUASH_MERGE_END/' | grep -Ev "^SQUASH_MERGE_(START|END)")
+    # Extract content between markers, excluding the exact marker lines (HTML comments)
+    message=$(echo "$body" | awk '/SQUASH_MERGE_START/,/SQUASH_MERGE_END/' | grep -Ev "<!--[[:space:]]*SQUASH_MERGE_(START|END)[[:space:]]*-->")
   fi
   
   echo "$message"
