@@ -80,10 +80,36 @@ __merge_status() {
   __pr_view_field mergeStateStatus "$pr_number"
 }
 
+__extract_squash_merge_message() {
+  local pr_number=$1
+  local body=""
+  local message=""
+  
+  body=$(gh pr view "$pr_number" --json "body" --jq ".body")
+  
+  # Check if both markers exist before extraction
+  if echo "$body" | grep -q "SQUASH_MERGE_START" && echo "$body" | grep -q "SQUASH_MERGE_END"; then
+    # Extract content between markers, excluding the exact marker lines (HTML comments)
+    message=$(echo "$body" | awk '/SQUASH_MERGE_START/,/SQUASH_MERGE_END/' | grep -Ev "<!--[[:space:]]*SQUASH_MERGE_(START|END)[[:space:]]*-->")
+  fi
+  
+  echo "$message"
+}
+
 __bot_squash_merge_param() {
   local pr_number=$1
   if __is_bot "$pr_number"; then
-    echo "--use-default-msg"
+    local squash_message=""
+    local trimmed=""
+    squash_message=$(__extract_squash_merge_message "$pr_number")
+    trimmed=$(echo "$squash_message" | tr -d '[:space:]')
+    
+    # If there's a viable squash-merge message (non-empty after trimming all whitespace), don't use default message
+    if [[ -n "$trimmed" ]]; then
+      echo ""
+    else
+      echo "--use-default-msg"
+    fi
   else
     echo ""
   fi
