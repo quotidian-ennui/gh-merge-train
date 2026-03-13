@@ -9,9 +9,10 @@ BASEDIR=$(dirname "$(realpath "$0")")
 source "$BASEDIR/includes/common.sh"
 POLL_INTERVAL_SECS=${GH_POLL_INTERVAL_SECS:-30}
 GH_MERGE_TRAIN_REBASE="true"
-GH_MERGE_TRAIN_MAX_ATTEMPTS=${GH_MERGE_TRAIN_MAX_ATTEMPTS:-5}
+GH_MERGE_TRAIN_MAX_ATTEMPTS=${GH_MERGE_TRAIN_MAX_ATTEMPTS:-4}
 GH_MERGE_TRAIN_BOT_LABEL=${GH_MERGE_TRAIN_BOT_LABEL:-}
 GH_MERGE_TRAIN_DEPENDABOT_REBASE=${GH_MERGE_TRAIN_DEPENDABOT_REBASE:-}
+GH_MERGE_TRAIN_DEPENDABOT_RECREATE=${GH_MERGE_TRAIN_DEPENDABOT_RECREATE:-}
 
 #shellcheck disable=SC2154
 usage() {
@@ -40,9 +41,11 @@ Flags
   -m, --merge merge rather than rebase when updating the pr branch
 
 env:
-  GH_MERGE_TRAIN_MAX_ATTEMPTS      : [$GH_MERGE_TRAIN_MAX_ATTEMPTS] : how many times to attempt an update
-  GH_MERGE_TRAIN_BOT_LABEL         : [$GH_MERGE_TRAIN_BOT_LABEL] : optional label to apply to a bot PR.
-  GH_MERGE_TRAIN_DEPENDABOT_REBASE : [$GH_MERGE_TRAIN_DEPENDABOT_REBASE] : optional use dependabot chat-ops to rebase if appropriate.
+  GH_POLL_INTERVAL_SECS             : interval between re-attempts         : [$GH_POLL_INTERVAL_SECS]
+  GH_MERGE_TRAIN_MAX_ATTEMPTS       : how many times to attempt an update  : [$GH_MERGE_TRAIN_MAX_ATTEMPTS]
+  GH_MERGE_TRAIN_BOT_LABEL          : optional label to apply to a bot PR. : [$GH_MERGE_TRAIN_BOT_LABEL]
+  GH_MERGE_TRAIN_DEPENDABOT_REBASE  : if 'true' use @dependabot rebase     : [$GH_MERGE_TRAIN_DEPENDABOT_REBASE]
+  GH_MERGE_TRAIN_DEPENDABOT_RECREATE: if 'true' use @dependabot recreate   : [$GH_MERGE_TRAIN_DEPENDABOT_RECREATE]
 EOF
   exit "$exit"
 }
@@ -84,15 +87,15 @@ __extract_squash_merge_message() {
   local pr_number=$1
   local body=""
   local message=""
-  
+
   body=$(gh pr view "$pr_number" --json "body" --jq ".body")
-  
+
   # Check if both markers exist before extraction
   if echo "$body" | grep -q "SQUASH_MERGE_START" && echo "$body" | grep -q "SQUASH_MERGE_END"; then
     # Extract content between markers, excluding the exact marker lines (HTML comments)
     message=$(echo "$body" | awk '/SQUASH_MERGE_START/,/SQUASH_MERGE_END/' | grep -Ev "<!--[[:space:]]*SQUASH_MERGE_(START|END)[[:space:]]*-->")
   fi
-  
+
   echo "$message"
 }
 
@@ -103,7 +106,7 @@ __bot_squash_merge_param() {
     local trimmed=""
     squash_message=$(__extract_squash_merge_message "$pr_number")
     trimmed=$(echo "$squash_message" | tr -d '[:space:]')
-    
+
     # If there's a viable squash-merge message (non-empty after trimming all whitespace), don't use default message
     if [[ -n "$trimmed" ]]; then
       echo ""
@@ -156,31 +159,36 @@ __approve_then_merge() {
 
 __update_branch() {
   local pr_number="$1"
+  local force_use_merge="$2"
   local updateCount=0
   local update_args=()
+  local dependabot_comment="@dependabot rebase"
 
-  if [[ "$GH_MERGE_TRAIN_DEPENDABOT_REBASE" == "true" ]]; then
+  if [[ "$GH_MERGE_TRAIN_DEPENDABOT_REBASE" == "true" || "$GH_MERGE_TRAIN_DEPENDABOT_RECREATE" == "true" ]]; then
     if __is_dependabot "$pr_number"; then
-      echo "ℹ️ Update branch using @dependabot rebase"
-      if ! gh pr comment "$pr_number" --body "@dependabot rebase"; then
+      if [[ "$GH_MERGE_TRAIN_DEPENDABOT_RECREATE" == "true" ]]; then
+        dependabot_comment="@dependabot recreate"
+      fi
+      echo "ℹ️ Update branch using $dependabot_comment"
+      if ! gh pr comment "$pr_number" --body "$dependabot_comment"; then
         echo "⚠️ Failed to rebase via comment dependabot comment"
-        exit 1
+        return 1
       fi
       while [[ ! $(__merge_status "$pr_number") =~ ^(CLEAN|BLOCKED)$ ]]; do
         updateCount=$((updateCount + 1))
         if [[ "$updateCount" -ge "$GH_MERGE_TRAIN_MAX_ATTEMPTS" ]]; then
           echo -e "\n🚫 Branch update failed too many times"
-          exit 1
+          return 1
         else
           echo "Waiting on dependabot to catch up for $POLL_INTERVAL_SECS seconds..."
           sleep "$POLL_INTERVAL_SECS"
         fi
       done
-      return
+      return 0
     fi
   fi
 
-  if [[ "$GH_MERGE_TRAIN_REBASE" == "true" ]]; then
+  if [[ "$GH_MERGE_TRAIN_REBASE" == "true" && "$force_use_merge" != "true" ]]; then
     update_args+=("--rebase")
   fi
 
@@ -190,12 +198,13 @@ __update_branch() {
     updateCount=$((updateCount + 1))
     if [[ "$updateCount" -ge "$GH_MERGE_TRAIN_MAX_ATTEMPTS" ]]; then
       echo -e "\n🚫 Branch update failed too many times"
-      exit 1
+      return 1
     else
       echo "Update failed. Retrying in $POLL_INTERVAL_SECS seconds..."
       sleep "$POLL_INTERVAL_SECS"
     fi
   done
+  return 0
 }
 
 {
@@ -237,7 +246,12 @@ __update_branch() {
     fi
     echo "ℹ️ Working on $url"
     if [[ ! $(__merge_status "$pr") =~ ^(CLEAN|BLOCKED)$ ]]; then
-      __update_branch "$pr"
+      if ! __update_branch "$pr"; then
+        echo "⚠️ last attempt to merge"
+        if ! __update_branch "$pr" "true"; then
+          exit 1
+        fi
+      fi
       # sad but sometimes the checks don't start quick enough
       sleep "$POLL_INTERVAL_SECS"
     fi
