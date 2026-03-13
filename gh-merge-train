@@ -41,7 +41,7 @@ Flags
   -m, --merge merge rather than rebase when updating the pr branch
 
 env:
-  GH_POLL_INTERVAL_SECS             : interval between re-attempts         : [$GH_POLL_INTERVAL_SECS]
+  GH_POLL_INTERVAL_SECS             : interval between re-attempts         : [$POLL_INTERVAL_SECS]
   GH_MERGE_TRAIN_MAX_ATTEMPTS       : how many times to attempt an update  : [$GH_MERGE_TRAIN_MAX_ATTEMPTS]
   GH_MERGE_TRAIN_BOT_LABEL          : optional label to apply to a bot PR. : [$GH_MERGE_TRAIN_BOT_LABEL]
   GH_MERGE_TRAIN_DEPENDABOT_REBASE  : if 'true' use @dependabot rebase     : [$GH_MERGE_TRAIN_DEPENDABOT_REBASE]
@@ -157,33 +157,47 @@ __approve_then_merge() {
   gh squash-merge "$pr_number" "$(__bot_squash_merge_param "$pr_number")"
 }
 
+__dependabot_commenter() {
+  local pr_number="$1"
+  local max_retries=$GH_MERGE_TRAIN_MAX_ATTEMPTS
+  local dependabot_comment="@dependabot rebase"
+
+  if [[ "$GH_MERGE_TRAIN_DEPENDABOT_RECREATE" == "true" ]]; then
+    dependabot_comment="@dependabot recreate"
+  fi
+  echo "ℹ️ Update branch using $dependabot_comment"
+  if ! gh pr comment "$pr_number" --body "$dependabot_comment"; then
+    echo "⚠️ Failed to rebase via comment $dependabot_comment"
+    return 1
+  fi
+  while [[ ! $(__merge_status "$pr_number") =~ ^(CLEAN|BLOCKED)$ ]]; do
+    updateCount=$((updateCount + 1))
+    if [[ "$updateCount" -ge "$max_retries" ]]; then
+      echo -e "\n🚫 Branch update failed too many times"
+      return 1
+    else
+      echo "Waiting on dependabot to catch up for $POLL_INTERVAL_SECS seconds..."
+      sleep "$POLL_INTERVAL_SECS"
+    fi
+  done
+  return 0
+}
 __update_branch() {
   local pr_number="$1"
   local force_use_merge="$2"
   local updateCount=0
   local update_args=()
   local dependabot_comment="@dependabot rebase"
+  local max_retries="$GH_MERGE_TRAIN_MAX_ATTEMPTS"
 
-  if [[ "$GH_MERGE_TRAIN_DEPENDABOT_REBASE" == "true" || "$GH_MERGE_TRAIN_DEPENDABOT_RECREATE" == "true" ]]; then
+  if [[ "$force_use_merge" == "true" ]]; then
+    max_retries=1
+  fi
+  if [[ "$force_use_merge" != "true" && ("$GH_MERGE_TRAIN_DEPENDABOT_REBASE" == "true" || "$GH_MERGE_TRAIN_DEPENDABOT_RECREATE" == "true") ]]; then
     if __is_dependabot "$pr_number"; then
-      if [[ "$GH_MERGE_TRAIN_DEPENDABOT_RECREATE" == "true" ]]; then
-        dependabot_comment="@dependabot recreate"
-      fi
-      echo "ℹ️ Update branch using $dependabot_comment"
-      if ! gh pr comment "$pr_number" --body "$dependabot_comment"; then
-        echo "⚠️ Failed to rebase via comment dependabot comment"
+      if ! __dependabot_commenter "$pr_number"; then
         return 1
       fi
-      while [[ ! $(__merge_status "$pr_number") =~ ^(CLEAN|BLOCKED)$ ]]; do
-        updateCount=$((updateCount + 1))
-        if [[ "$updateCount" -ge "$GH_MERGE_TRAIN_MAX_ATTEMPTS" ]]; then
-          echo -e "\n🚫 Branch update failed too many times"
-          return 1
-        else
-          echo "Waiting on dependabot to catch up for $POLL_INTERVAL_SECS seconds..."
-          sleep "$POLL_INTERVAL_SECS"
-        fi
-      done
       return 0
     fi
   fi
@@ -196,7 +210,7 @@ __update_branch() {
   echo "ℹ️ Update branch using gh pr update-branch $pr_number ${update_args[@]}"
   while ! gh pr update-branch "$pr_number" "${update_args[@]}"; do
     updateCount=$((updateCount + 1))
-    if [[ "$updateCount" -ge "$GH_MERGE_TRAIN_MAX_ATTEMPTS" ]]; then
+    if [[ "$updateCount" -ge "$max_retries" ]]; then
       echo -e "\n🚫 Branch update failed too many times"
       return 1
     else
