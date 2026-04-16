@@ -3,7 +3,9 @@
 - Explain the "why" behind recommendations.
 - Always prioritize security vulnerabilities and performance issues that could impact users.
 - Never suggest changes to improve readability.
+- Never suggest changes to comments based on grammar and spelling
 - Never suggest changes related to platform variants for GNU tooling.
+- Early termination of scripts based on unexpected inputs is acceptable and too much error checking is BAD.
 
 ## General Principles
 
