@@ -46,11 +46,12 @@ Flags
   -m, --merge merge rather than rebase when updating the pr branch
 
 env:
-  GH_POLL_INTERVAL_SECS             : interval between re-attempts         : []
-  GH_MERGE_TRAIN_MAX_ATTEMPTS       : how many times to attempt an update  : [4]
-  GH_MERGE_TRAIN_BOT_LABEL          : optional label to apply to a bot PR. : []
-  GH_MERGE_TRAIN_DEPENDABOT_REBASE  : if 'true' use @dependabot rebase     : []
-  GH_MERGE_TRAIN_DEPENDABOT_RECREATE: if 'true' use @dependabot recreate   : []
+  GH_POLL_INTERVAL_SECS             : interval between re-attempts            : [30]
+  GH_MERGE_TRAIN_MAX_ATTEMPTS       : how many times to attempt an update     : [4]
+  GH_MERGE_TRAIN_BOT_LABEL          : optional label to apply to a bot PR.    : []
+  GH_MERGE_TRAIN_DEPENDABOT_REBASE  : if 'true' use @dependabot rebase        : []
+  GH_MERGE_TRAIN_DEPENDABOT_RECREATE: if 'true' use @dependabot recreate      : []
+  GH_MERGE_TRAIN_RETRY_FAILED_JOBS  : Because you have flaky jobs for reasons : [false]
 ```
 
 #### Environment Variables
@@ -60,6 +61,7 @@ env:
 - `GH_MERGE_TRAIN_BOT_LABEL` -> an optional label that you want to apply to PRs that were raised by a bot (e.g. dependabot)
 - `GH_MERGE_TRAIN_DEPENDABOT_REBASE` -> use `@dependabot rebase` when updating the PR; if it is a dependabot created PR.
 - `GH_MERGE_TRAIN_DEPENDABOT_RECREATE` -> use `@dependabot recreate` when updating the PR; if it is a dependabot created PR.
+- `GH_MERGE_TRAIN_RETRY_FAILED_JOBS` -> set to true to retry failed status checks in the PR once (and only once!)
 
 ### Bonus Chatter
 
@@ -70,3 +72,5 @@ There are reasons for the `GH_MERGE_TRAIN_BOT_LABEL` and `GH_MERGE_TRAIN_DEPENDA
 `GH_MERGE_TRAIN_DEPENDABOT_REBASE` | `GH_MERGE_TRAIN_DEPENDABOT_RECREATE` is because dependabot can do a _more appropriate thing_ when attempting to update a PR; it's subtly better than trying to do a `gh pr update-branch --rebase` in some use cases. If you are finding that, then setting this flag to be true will be your friend but you are going to be beholden to dependabot's scheduling.
 
 Note that right now (2026-03-13) there seems to be trouble with `gh pr update-branch --rebase` anyway (based on <https://github.com/orgs/community/discussions/189028>) so you might be better off always using the --merge flag.
+
+`GH_MERGE_TRAIN_RETRY_FAILED_JOBS` is because some projects appear to have flaky tests that don't always complete under the auspices of github. Setting this variable to be 'true' allows the failed jobs to be retried once via the `gh run rerun --job` command. It's intentional to only run once, if the tests are going to semi-reliably fail then it's indicative of a bigger problem anyway so you probably have some technical debt to fix the actions.

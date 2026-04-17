@@ -13,6 +13,11 @@ GH_MERGE_TRAIN_MAX_ATTEMPTS=${GH_MERGE_TRAIN_MAX_ATTEMPTS:-4}
 GH_MERGE_TRAIN_BOT_LABEL=${GH_MERGE_TRAIN_BOT_LABEL:-}
 GH_MERGE_TRAIN_DEPENDABOT_REBASE=${GH_MERGE_TRAIN_DEPENDABOT_REBASE:-}
 GH_MERGE_TRAIN_DEPENDABOT_RECREATE=${GH_MERGE_TRAIN_DEPENDABOT_RECREATE:-}
+GH_MERGE_TRAIN_RETRY_FAILED_JOBS=${GH_MERGE_TRAIN_RETRY_FAILED_JOBS:-false}
+
+# Selects failed jobs from the status_rollup with some dodgy capturing
+# output to be {"runId":"24521981319","jobId":"71682061689"}
+JQ_FAILED_JOBS='.[] | select ( .conclusion=="FAILURE" ) | .detailsUrl | capture("/runs/(?<runId>[0-9]+)/job/(?<jobId>[0-9]+)")'
 
 #shellcheck disable=SC2154
 usage() {
@@ -41,13 +46,20 @@ Flags
   -m, --merge merge rather than rebase when updating the pr branch
 
 env:
-  GH_POLL_INTERVAL_SECS             : interval between re-attempts         : [$POLL_INTERVAL_SECS]
-  GH_MERGE_TRAIN_MAX_ATTEMPTS       : how many times to attempt an update  : [$GH_MERGE_TRAIN_MAX_ATTEMPTS]
-  GH_MERGE_TRAIN_BOT_LABEL          : optional label to apply to a bot PR. : [$GH_MERGE_TRAIN_BOT_LABEL]
-  GH_MERGE_TRAIN_DEPENDABOT_REBASE  : if 'true' use @dependabot rebase     : [$GH_MERGE_TRAIN_DEPENDABOT_REBASE]
-  GH_MERGE_TRAIN_DEPENDABOT_RECREATE: if 'true' use @dependabot recreate   : [$GH_MERGE_TRAIN_DEPENDABOT_RECREATE]
+  GH_POLL_INTERVAL_SECS             : interval between re-attempts            : [$POLL_INTERVAL_SECS]
+  GH_MERGE_TRAIN_MAX_ATTEMPTS       : how many times to attempt an update     : [$GH_MERGE_TRAIN_MAX_ATTEMPTS]
+  GH_MERGE_TRAIN_BOT_LABEL          : optional label to apply to a bot PR.    : [$GH_MERGE_TRAIN_BOT_LABEL]
+  GH_MERGE_TRAIN_DEPENDABOT_REBASE  : if 'true' use @dependabot rebase        : [$GH_MERGE_TRAIN_DEPENDABOT_REBASE]
+  GH_MERGE_TRAIN_DEPENDABOT_RECREATE: if 'true' use @dependabot recreate      : [$GH_MERGE_TRAIN_DEPENDABOT_RECREATE]
+  GH_MERGE_TRAIN_RETRY_FAILED_JOBS  : Because you have flaky jobs for reasons : [$GH_MERGE_TRAIN_RETRY_FAILED_JOBS]
 EOF
   exit "$exit"
+}
+
+__sleep() {
+  local msg="$1"
+  echo -e "$msg"
+  sleep "$POLL_INTERVAL_SECS"
 }
 
 __is_bot() {
@@ -128,9 +140,37 @@ __label_if_bot() {
   fi
 }
 
+__retry_failed_jobs() {
+  local pr_number="$1"
+  local runId
+  local jobId
+  local job_id_jsonlines=()
+
+  mapfile -t job_id_jsonlines < <(gh pr view "$pr_number" --json "statusCheckRollup" --jq '.statusCheckRollup' | jq -c "$JQ_FAILED_JOBS")
+  for jsonline in "${job_id_jsonlines[@]}"; do
+    runId=$(echo "$jsonline" | jq -r ".runId")
+    jobId=$(echo "$jsonline" | jq -r ".jobId")
+    echo "🔎 ... Retry $jobId in $runId"
+    gh run rerun --job "$jobId"
+  done
+}
+
+# Dodgy actions, retry them once
+# After that, fail. Dev should fix your damned actions!
+__wait_with_retry() {
+  local pr_number="$1"
+
+  if ! __wait_for_checks "$pr_number"; then
+    echo "🛟 ... PR Checks had failures, retry once"
+    __retry_failed_jobs "$pr_number"
+    __sleep "💤 ... Waiting for jobs to start"
+    __wait_for_checks "$pr_number"
+  fi
+}
+
 __wait_for_checks() {
   local pr_number="$1"
-  echo "🔎 ...waiting for checks to complete using gh pr checks"
+  echo "🔎 ... waiting for checks to complete using gh pr checks"
   gh pr checks "$pr_number" --watch --fail-fast --interval "$POLL_INTERVAL_SECS"
 }
 
@@ -176,12 +216,12 @@ __dependabot_commenter() {
       echo -e "\n🚫 Branch update failed too many times"
       return 1
     else
-      echo "Waiting on dependabot to catch up for $POLL_INTERVAL_SECS seconds..."
-      sleep "$POLL_INTERVAL_SECS"
+      __sleep "💤 Waiting on dependabot to catch up, $POLL_INTERVAL_SECS seconds..."
     fi
   done
   return 0
 }
+
 __update_branch() {
   local pr_number="$1"
   local force_use_merge="$2"
@@ -214,8 +254,7 @@ __update_branch() {
       echo -e "\n🚫 Branch update failed too many times"
       return 1
     else
-      echo "Update failed. Retrying in $POLL_INTERVAL_SECS seconds..."
-      sleep "$POLL_INTERVAL_SECS"
+      __sleep "⚠️ Update failed. Retrying in $POLL_INTERVAL_SECS seconds..."
     fi
   done
   return 0
@@ -250,7 +289,7 @@ __update_branch() {
 
   for pr in "$@"; do
     if [[ "$first" != "true" ]]; then
-      sleep "$POLL_INTERVAL_SECS"
+      __sleep "💤..."
     fi
     first="false"
     url="$(__pr_view_field url "$pr")"
@@ -267,10 +306,14 @@ __update_branch() {
         fi
       fi
       # sad but sometimes the checks don't start quick enough
-      sleep "$POLL_INTERVAL_SECS"
+      __sleep "💤... Waiting for checks to fire."
     fi
     __label_if_bot "$pr"
-    __wait_for_checks "$pr"
+    if [[ "$GH_MERGE_TRAIN_RETRY_FAILED_JOBS" == "true" ]]; then
+      __wait_with_retry "$pr"
+    else
+      __wait_for_checks "$pr"
+    fi
     __approve_then_merge "$pr"
   done
 }
