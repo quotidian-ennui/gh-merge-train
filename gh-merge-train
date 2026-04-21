@@ -131,12 +131,24 @@ __bot_squash_merge_param() {
 }
 
 __is_valid_label() {
-  local label_to_find="$1"
+  local pr_number="$1"
+  local label_to_find="$2"
   local found_label=""
-  found_label=$(gh label list --json "name" | jq -r --arg label "$label_to_find" -c '.[] | select (.name == $label) | .name')
-  if [[ "$found_label" == "$GH_MERGE_TRAIN_BOT_LABEL" ]]; then
+  local repo=""
+  local alt_repo_args=()
+
+  if [[ "$pr_number" =~ http* ]]; then
+    ## github URL, so strip it out.
+    repo="${pr_number##https://github.com/}"
+    repo="${repo%%/pull*}"
+    alt_repo_args+=("--repo")
+    alt_repo_args+=("$repo")
+  fi
+  found_label=$(gh label list "${alt_repo_args[@]}" --json "name" | jq -r --arg label "$label_to_find" -c '.[] | select (.name == $label) | .name')
+  if [[ "$found_label" == "$label_to_find" ]]; then
     return 0
   fi
+  echo "🏷️ label $label_to_find not found in repo for $pr_number"
   return 1
 }
 
@@ -152,7 +164,7 @@ __wait_if_skipped_jobs() {
 __label_if_bot() {
   local pr_number=$1
   if [[ -n "$GH_MERGE_TRAIN_BOT_LABEL" ]]; then
-    if __is_valid_label "$GH_MERGE_TRAIN_BOT_LABEL"; then
+    if __is_valid_label "$pr_number" "$GH_MERGE_TRAIN_BOT_LABEL"; then
       if __is_bot "$pr_number"; then
         echo "ℹ️ Applying label $GH_MERGE_TRAIN_BOT_LABEL"
         gh pr edit "$pr_number" --add-label "$GH_MERGE_TRAIN_BOT_LABEL"
