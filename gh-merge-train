@@ -130,12 +130,47 @@ __bot_squash_merge_param() {
   fi
 }
 
+__is_valid_label() {
+  local pr_number="$1"
+  local label_to_find="$2"
+  local found_label=""
+  local repo=""
+  local alt_repo_args=()
+
+  if [[ "$pr_number" =~ http* ]]; then
+    ## github URL, so strip it out.
+    repo="${pr_number##https://github.com/}"
+    repo="${repo%%/pull*}"
+    alt_repo_args+=("--repo")
+    alt_repo_args+=("$repo")
+  fi
+  found_label=$(gh label list "${alt_repo_args[@]}" --json "name" | jq -r --arg label "$label_to_find" -c '.[] | select (.name == $label) | .name')
+  if [[ "$found_label" == "$label_to_find" ]]; then
+    return 0
+  fi
+  echo "🏷️ label $label_to_find not found in repo for $pr_number"
+  return 1
+}
+
+__wait_if_skipped_jobs() {
+  local pr_number=$1
+  local skipped_jobs=0
+  skipped_jobs=$(gh pr checks "$pr_number" --json "name,state" | jq -r -c '.[] | select (.state == "SKIPPED") | .name' | wc -l)
+  if [[ "$skipped_jobs" -gt 0 ]]; then
+    __sleep "💤 ... Waiting for skipped jobs to potentially fire"
+  fi
+}
+
 __label_if_bot() {
   local pr_number=$1
   if [[ -n "$GH_MERGE_TRAIN_BOT_LABEL" ]]; then
-    if __is_bot "$pr_number"; then
-      echo "ℹ️ Applying label $GH_MERGE_TRAIN_BOT_LABEL"
-      gh pr edit "$pr_number" --add-label "$GH_MERGE_TRAIN_BOT_LABEL"
+    if __is_valid_label "$pr_number" "$GH_MERGE_TRAIN_BOT_LABEL"; then
+      if __is_bot "$pr_number"; then
+        echo "ℹ️ Applying label $GH_MERGE_TRAIN_BOT_LABEL"
+        gh pr edit "$pr_number" --add-label "$GH_MERGE_TRAIN_BOT_LABEL"
+        # If there are skipped jobs, then labelling may start them, so give it a chance.
+        __wait_if_skipped_jobs "$pr_number"
+      fi
     fi
   fi
 }
@@ -298,6 +333,7 @@ __update_branch() {
       continue
     fi
     echo "ℹ️ Working on $url"
+    __label_if_bot "$pr"
     if [[ ! $(__merge_status "$pr") =~ ^(CLEAN|BLOCKED)$ ]]; then
       if ! __update_branch "$pr"; then
         echo "⚠️ last attempt to merge"
@@ -308,7 +344,6 @@ __update_branch() {
       # sad but sometimes the checks don't start quick enough
       __sleep "💤... Waiting for checks to fire."
     fi
-    __label_if_bot "$pr"
     if [[ "$GH_MERGE_TRAIN_RETRY_FAILED_JOBS" == "true" ]]; then
       __wait_with_retry "$pr"
     else
