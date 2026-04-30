@@ -28,6 +28,9 @@ Usage: gh merge-train [flags] [pr...]
 
 This is a fake merge train that rebases, approves, and squash-merges each argument
 
+If no <pr> is supplied the PR for the current branch is used.
+Terminates with a warning if the current branch is the default branch.
+
 In effect it takes some toil out of your life because we end up with this:
 
 gh-merge-train 25 26 27
@@ -93,6 +96,22 @@ __pr_view_field() {
 __merge_status() {
   local pr_number=$1
   __pr_view_field mergeStateStatus "$pr_number"
+}
+
+__current_branch_pr() {
+  local current default pr_number
+  current=$(git branch --show-current)
+  default=$(gh repo view --json defaultBranchRef --jq ".defaultBranchRef.name")
+  if [[ "$current" == "$default" ]]; then
+    echo "⚠️ on default branch, cannot determine PR" >&2
+    exit 1
+  fi
+  pr_number=$(gh pr view --json number --jq ".number" 2>/dev/null || true)
+  if [[ -z "$pr_number" ]]; then
+    echo "⚠️ no PR found for current branch" >&2
+    exit 1
+  fi
+  echo "$pr_number"
 }
 
 __extract_squash_merge_message() {
@@ -317,9 +336,12 @@ __update_branch() {
     esac
   done
   if [[ "$#" -eq 0 ]]; then
+    mapfile -t _prs < <(__current_branch_pr)
+    set -- "${_prs[@]}"
+  fi
+  if [[ "$#" -eq 0 ]]; then
     usage
   fi
-
   first="true"
 
   for pr in "$@"; do
