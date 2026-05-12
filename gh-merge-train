@@ -14,6 +14,7 @@ GH_MERGE_TRAIN_BOT_LABEL=${GH_MERGE_TRAIN_BOT_LABEL:-}
 GH_MERGE_TRAIN_DEPENDABOT_REBASE=${GH_MERGE_TRAIN_DEPENDABOT_REBASE:-}
 GH_MERGE_TRAIN_DEPENDABOT_RECREATE=${GH_MERGE_TRAIN_DEPENDABOT_RECREATE:-}
 GH_MERGE_TRAIN_RETRY_FAILED_JOBS=${GH_MERGE_TRAIN_RETRY_FAILED_JOBS:-false}
+GH_MERGE_TRAIN_CURRENT_BRANCH=${GH_MERGE_TRAIN_CURRENT_BRANCH:-false}
 
 # Selects failed jobs from the status_rollup with some dodgy capturing
 # output to be {"runId":"24521981319","jobId":"71682061689"}
@@ -49,12 +50,13 @@ Flags
   -m, --merge merge rather than rebase when updating the pr branch
 
 env:
-  GH_POLL_INTERVAL_SECS             : interval between re-attempts            : [$POLL_INTERVAL_SECS]
-  GH_MERGE_TRAIN_MAX_ATTEMPTS       : how many times to attempt an update     : [$GH_MERGE_TRAIN_MAX_ATTEMPTS]
-  GH_MERGE_TRAIN_BOT_LABEL          : optional label to apply to a bot PR.    : [$GH_MERGE_TRAIN_BOT_LABEL]
-  GH_MERGE_TRAIN_DEPENDABOT_REBASE  : if 'true' use @dependabot rebase        : [$GH_MERGE_TRAIN_DEPENDABOT_REBASE]
-  GH_MERGE_TRAIN_DEPENDABOT_RECREATE: if 'true' use @dependabot recreate      : [$GH_MERGE_TRAIN_DEPENDABOT_RECREATE]
-  GH_MERGE_TRAIN_RETRY_FAILED_JOBS  : Because you have flaky jobs for reasons : [$GH_MERGE_TRAIN_RETRY_FAILED_JOBS]
+  GH_POLL_INTERVAL_SECS             : interval between re-attempts              : [$POLL_INTERVAL_SECS]
+  GH_MERGE_TRAIN_MAX_ATTEMPTS       : how many times to attempt an update       : [$GH_MERGE_TRAIN_MAX_ATTEMPTS]
+  GH_MERGE_TRAIN_BOT_LABEL          : optional label to apply to a bot PR.      : [$GH_MERGE_TRAIN_BOT_LABEL]
+  GH_MERGE_TRAIN_DEPENDABOT_REBASE  : if 'true' use @dependabot rebase          : [$GH_MERGE_TRAIN_DEPENDABOT_REBASE]
+  GH_MERGE_TRAIN_DEPENDABOT_RECREATE: if 'true' use @dependabot recreate        : [$GH_MERGE_TRAIN_DEPENDABOT_RECREATE]
+  GH_MERGE_TRAIN_RETRY_FAILED_JOBS  : Because you have flaky jobs for reasons   : [$GH_MERGE_TRAIN_RETRY_FAILED_JOBS]
+  GH_MERGE_TRAIN_CURRENT_BRANCH     : merge train the current branch if no args : [$GH_MERGE_TRAIN_CURRENT_BRANCH]
 EOF
   exit "$exit"
 }
@@ -336,11 +338,12 @@ __update_branch() {
     esac
   done
   if [[ "$#" -eq 0 ]]; then
-    mapfile -t _prs < <(__current_branch_pr)
-    set -- "${_prs[@]}"
-  fi
-  if [[ "$#" -eq 0 ]]; then
-    usage
+    if [[ "$GH_MERGE_TRAIN_CURRENT_BRANCH" == "true" ]]; then
+      mapfile -t _prs < <(__current_branch_pr)
+      set -- "${_prs[@]}"
+    else
+      usage
+    fi
   fi
   first="true"
 
