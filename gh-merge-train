@@ -322,6 +322,10 @@ __delete_entry() {
   local entry="$2"
 
   sed -i "s#^$entry\$##g" "$file"
+  __delete_blank_lines "$file"
+}
+
+__delete_blank_lines() {
   sed -i '/^$/d' "$file"
 }
 
@@ -330,6 +334,7 @@ __process_entries_in() {
   local entry=""
   local first="true"
 
+  __delete_blank_lines "$file"
   entry="$(head -n1 "$file")"
   while [[ "$entry" != "" ]]; do
     if [[ "$first" != "true" ]]; then
@@ -385,7 +390,7 @@ __merge_train() {
 {
   inputfile=""
   ARGS=$(getopt --options 'mhi:' --longoptions 'inputfile:,merge,help' -- "${@}")
-  eval "set -- ${ARGS}"
+  eval set -- "$ARGS"
   while true; do
     case "${1}" in
     --merge | -m)
