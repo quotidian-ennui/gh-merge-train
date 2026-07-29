@@ -321,19 +321,23 @@ __delete_entry() {
   local file="$1"
   local entry="$2"
 
-  sed -i "s#$entry##g" "$file"
+  sed -i "s#^$entry\$##g" "$file"
   sed -i '/^$/d' "$file"
 }
 
 __process_entries_in() {
   local file="$1"
   local entry=""
+  local first="true"
 
   entry="$(head -n1 "$file")"
   while [[ "$entry" != "" ]]; do
+    if [[ "$first" != "true" ]]; then
+      __sleep "💤..."
+    fi
+    first=false
     __merge_train "$entry"
     __delete_entry "$file" "$entry"
-    __sleep "💤..."
     entry="$(head -n1 "$file")"
   done
   # Delete empty files after processing.
