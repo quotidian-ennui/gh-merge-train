@@ -44,6 +44,7 @@ done
 
 Flags
   -m, --merge merge rather than rebase when updating the pr branch
+  -i, --inputfile file containing a newline separated list of PR url/numbers to process
 
 env:
   GH_POLL_INTERVAL_SECS             : interval between re-attempts            : [30]

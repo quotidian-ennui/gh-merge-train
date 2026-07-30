@@ -48,6 +48,7 @@ done
 
 Flags
   -m, --merge merge rather than rebase when updating the pr branch
+  -i, --inputfile file containing a newline separated list of PR url/numbers to process
 
 env:
   GH_POLL_INTERVAL_SECS             : interval between re-attempts              : [$POLL_INTERVAL_SECS]
@@ -316,36 +317,44 @@ __update_branch() {
   return 0
 }
 
-{
-  ARGS=$(getopt --options 'mh' --longoptions 'merge,help' -- "${@}")
-  eval "set -- ${ARGS}"
-  while true; do
-    case "${1}" in
-    --merge | -m)
-      GH_MERGE_TRAIN_REBASE="false"
-      shift
-      ;;
-    -h | --help)
-      usage "0"
-      ;;
-    --)
-      shift
-      break
-      ;;
-    *)
-      usage
-      ;;
-    esac
-  done
-  if [[ "$#" -eq 0 ]]; then
-    if [[ "$GH_MERGE_TRAIN_CURRENT_BRANCH" == "true" ]]; then
-      mapfile -t _prs < <(__current_branch_pr)
-      set -- "${_prs[@]}"
-    else
-      usage
+__delete_entry() {
+  local file="$1"
+  local entry="$2"
+
+  sed -i "s#^$entry\$##g" "$file"
+  __delete_blank_lines "$file"
+}
+
+__delete_blank_lines() {
+  sed -i '/^$/d' "$file"
+}
+
+__process_entries_in() {
+  local file="$1"
+  local entry=""
+  local first="true"
+
+  __delete_blank_lines "$file"
+  entry="$(head -n1 "$file")"
+  while [[ "$entry" != "" ]]; do
+    if [[ "$first" != "true" ]]; then
+      __sleep "💤..."
     fi
+    first=false
+    __merge_train "$entry"
+    __delete_entry "$file" "$entry"
+    entry="$(head -n1 "$file")"
+  done
+  # Delete empty files after processing.
+  # Edge case being that if the file was always empty, then it just gets deleted.
+  # I find this acceptable.
+  if [[ ! -s "$file" ]]; then
+    rm -f "$file"
   fi
-  first="true"
+}
+
+__merge_train() {
+  local first="true"
 
   for pr in "$@"; do
     if [[ "$first" != "true" ]]; then
@@ -376,4 +385,45 @@ __update_branch() {
     fi
     __approve_then_merge "$pr"
   done
+}
+
+{
+  inputfile=""
+  ARGS=$(getopt --options 'mhi:' --longoptions 'inputfile:,merge,help' -- "${@}")
+  eval set -- "$ARGS"
+  while true; do
+    case "${1}" in
+    --merge | -m)
+      GH_MERGE_TRAIN_REBASE="false"
+      shift
+      ;;
+    --inputfile | -i)
+      inputfile="$2"
+      shift 2
+      ;;
+    -h | --help)
+      usage "0"
+      ;;
+    --)
+      shift
+      break
+      ;;
+    *)
+      usage
+      ;;
+    esac
+  done
+  if [[ "$#" -eq 0 && -z "$inputfile" ]]; then
+    if [[ "$GH_MERGE_TRAIN_CURRENT_BRANCH" == "true" ]]; then
+      mapfile -t _prs < <(__current_branch_pr)
+      set -- "${_prs[@]}"
+    else
+      usage
+    fi
+  fi
+  if [[ -n "$inputfile" ]]; then
+    __process_entries_in "$inputfile"
+  else
+    __merge_train "$@"
+  fi
 }
