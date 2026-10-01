@@ -5,20 +5,35 @@ set -eo pipefail
 export GH_PAGER="cat"
 
 BASEDIR=$(dirname "$(realpath "$0")")
+#shellcheck disable=SC2034
+POLL_INTERVAL_SECS=${GH_POLL_INTERVAL_SECS:-30}
+#shellcheck disable=SC2034
+GH_MERGE_TRAIN_REBASE="true"
+#shellcheck disable=SC2034
+GH_MERGE_TRAIN_MAX_ATTEMPTS=${GH_MERGE_TRAIN_MAX_ATTEMPTS:-4}
+#shellcheck disable=SC2034
+GH_MERGE_TRAIN_BOT_LABEL=${GH_MERGE_TRAIN_BOT_LABEL:-}
+#shellcheck disable=SC2034
+GH_MERGE_TRAIN_DEPENDABOT_REBASE=${GH_MERGE_TRAIN_DEPENDABOT_REBASE:-}
+#shellcheck disable=SC2034
+GH_MERGE_TRAIN_DEPENDABOT_RECREATE=${GH_MERGE_TRAIN_DEPENDABOT_RECREATE:-}
+#shellcheck disable=SC2034
+GH_MERGE_TRAIN_RETRY_FAILED_JOBS=${GH_MERGE_TRAIN_RETRY_FAILED_JOBS:-false}
+#shellcheck disable=SC2034
+GH_MERGE_TRAIN_CURRENT_BRANCH=${GH_MERGE_TRAIN_CURRENT_BRANCH:-false}
+#shellcheck disable=SC2034
+GH_MERGE_TRAIN_STACK_SUPPORT=${GH_MERGE_TRAIN_STACK_SUPPORT:-false}
+
 #shellcheck disable=SC1091
 source "$BASEDIR/includes/common.sh"
-POLL_INTERVAL_SECS=${GH_POLL_INTERVAL_SECS:-30}
-GH_MERGE_TRAIN_REBASE="true"
-GH_MERGE_TRAIN_MAX_ATTEMPTS=${GH_MERGE_TRAIN_MAX_ATTEMPTS:-4}
-GH_MERGE_TRAIN_BOT_LABEL=${GH_MERGE_TRAIN_BOT_LABEL:-}
-GH_MERGE_TRAIN_DEPENDABOT_REBASE=${GH_MERGE_TRAIN_DEPENDABOT_REBASE:-}
-GH_MERGE_TRAIN_DEPENDABOT_RECREATE=${GH_MERGE_TRAIN_DEPENDABOT_RECREATE:-}
-GH_MERGE_TRAIN_RETRY_FAILED_JOBS=${GH_MERGE_TRAIN_RETRY_FAILED_JOBS:-false}
-GH_MERGE_TRAIN_CURRENT_BRANCH=${GH_MERGE_TRAIN_CURRENT_BRANCH:-false}
-
-# Selects failed jobs from the status_rollup with some dodgy capturing
-# output to be {"runId":"24521981319","jobId":"71682061689"}
-JQ_FAILED_JOBS='.[] | select ( .conclusion=="FAILURE" ) | .detailsUrl | capture("/runs/(?<runId>[0-9]+)/job/(?<jobId>[0-9]+)")'
+#shellcheck disable=SC1091
+source "$BASEDIR/includes/pr-helpers.sh"
+#shellcheck disable=SC1091
+source "$BASEDIR/includes/file-support.sh"
+#shellcheck disable=SC1091
+source "$BASEDIR/includes/merge-support.sh"
+#shellcheck disable=SC1091
+source "$BASEDIR/includes/stack-support.sh"
 
 #shellcheck disable=SC2154
 usage() {
@@ -58,47 +73,9 @@ env:
   GH_MERGE_TRAIN_DEPENDABOT_RECREATE: if 'true' use @dependabot recreate        : [$GH_MERGE_TRAIN_DEPENDABOT_RECREATE]
   GH_MERGE_TRAIN_RETRY_FAILED_JOBS  : Because you have flaky jobs for reasons   : [$GH_MERGE_TRAIN_RETRY_FAILED_JOBS]
   GH_MERGE_TRAIN_CURRENT_BRANCH     : merge train the current branch if no args : [$GH_MERGE_TRAIN_CURRENT_BRANCH]
+  GH_MERGE_TRAIN_STACK_SUPPORT      : experimental 'gh stack' support           : [$GH_MERGE_TRAIN_STACK_SUPPORT]
 EOF
   exit "$exit"
-}
-
-__sleep() {
-  local msg="$1"
-  echo -e "$msg"
-  sleep "$POLL_INTERVAL_SECS"
-}
-
-__is_bot() {
-  local pr_number=$1
-  local is_bot="false"
-  is_bot=$(gh pr view "$pr_number" --json "author" --jq ".author.is_bot")
-  if [[ "$is_bot" == "true" ]]; then
-    return 0
-  else
-    return 1
-  fi
-}
-
-__is_dependabot() {
-  local pr_number=$1
-  local is_dependabot=""
-  is_dependabot=$(gh pr view "$pr_number" --json "author" --jq ".author.login")
-  if [[ "$is_dependabot" == "app/dependabot" ]]; then
-    return 0
-  else
-    return 1
-  fi
-}
-
-__pr_view_field() {
-  local field="$1"
-  local pr_number="$2"
-  gh pr view "$pr_number" --json "$field" --jq ".$field"
-}
-
-__merge_status() {
-  local pr_number=$1
-  __pr_view_field mergeStateStatus "$pr_number"
 }
 
 __current_branch_pr() {
@@ -117,273 +94,27 @@ __current_branch_pr() {
   echo "$pr_number"
 }
 
-__extract_squash_merge_message() {
-  local pr_number=$1
-  local body=""
-  local message=""
-
-  body=$(gh pr view "$pr_number" --json "body" --jq ".body")
-
-  # Check if both markers exist before extraction
-  if echo "$body" | grep -q "SQUASH_MERGE_START" && echo "$body" | grep -q "SQUASH_MERGE_END"; then
-    # Extract content between markers, excluding the exact marker lines (HTML comments)
-    message=$(echo "$body" | awk '/SQUASH_MERGE_START/,/SQUASH_MERGE_END/' | grep -Ev "<!--[[:space:]]*SQUASH_MERGE_(START|END)[[:space:]]*-->")
-  fi
-
-  echo "$message"
-}
-
-__bot_squash_merge_param() {
-  local pr_number=$1
-  if __is_bot "$pr_number"; then
-    local squash_message=""
-    local trimmed=""
-    squash_message=$(__extract_squash_merge_message "$pr_number")
-    trimmed=$(echo "$squash_message" | tr -d '[:space:]')
-
-    # If there's a viable squash-merge message (non-empty after trimming all whitespace), don't use default message
-    if [[ -n "$trimmed" ]]; then
-      echo ""
-    else
-      echo "--use-default-msg"
-    fi
-  else
-    echo ""
-  fi
-}
-
-__is_valid_label() {
-  local pr_number="$1"
-  local label_to_find="$2"
-  local found_label=""
-  local repo=""
-  local alt_repo_args=()
-
-  if [[ "$pr_number" =~ http* ]]; then
-    ## github URL, so strip it out.
-    repo="${pr_number##https://github.com/}"
-    repo="${repo%%/pull*}"
-    alt_repo_args+=("--repo")
-    alt_repo_args+=("$repo")
-  fi
-  found_label=$(gh label list "${alt_repo_args[@]}" --json "name" | jq -r --arg label "$label_to_find" -c '.[] | select (.name == $label) | .name')
-  if [[ "$found_label" == "$label_to_find" ]]; then
-    return 0
-  fi
-  echo "🏷️ label $label_to_find not found in repo for $pr_number"
-  return 1
-}
-
-__wait_if_skipped_jobs() {
-  local pr_number=$1
-  local skipped_jobs=0
-  skipped_jobs=$(gh pr checks "$pr_number" --json "name,state" | jq -r -c '.[] | select (.state == "SKIPPED") | .name' | wc -l)
-  if [[ "$skipped_jobs" -gt 0 ]]; then
-    __sleep "💤 ... Waiting for skipped jobs to potentially fire"
-  fi
-}
-
-__label_if_bot() {
-  local pr_number=$1
-  if [[ -n "$GH_MERGE_TRAIN_BOT_LABEL" ]]; then
-    if __is_valid_label "$pr_number" "$GH_MERGE_TRAIN_BOT_LABEL"; then
-      if __is_bot "$pr_number"; then
-        echo "ℹ️ Applying label $GH_MERGE_TRAIN_BOT_LABEL"
-        gh pr edit "$pr_number" --add-label "$GH_MERGE_TRAIN_BOT_LABEL"
-        # If there are skipped jobs, then labelling may start them, so give it a chance.
-        __wait_if_skipped_jobs "$pr_number"
-      fi
-    fi
-  fi
-}
-
-__retry_failed_jobs() {
-  local pr_number="$1"
-  local runId
-  local jobId
-  local job_id_jsonlines=()
-
-  mapfile -t job_id_jsonlines < <(gh pr view "$pr_number" --json "statusCheckRollup" --jq '.statusCheckRollup' | jq -c "$JQ_FAILED_JOBS")
-  for jsonline in "${job_id_jsonlines[@]}"; do
-    runId=$(echo "$jsonline" | jq -r ".runId")
-    jobId=$(echo "$jsonline" | jq -r ".jobId")
-    echo "🔎 ... Retry $jobId in $runId"
-    gh run rerun --job "$jobId"
-  done
-}
-
-# Dodgy actions, retry them once
-# After that, fail. Dev should fix your damned actions!
-__wait_with_retry() {
-  local pr_number="$1"
-
-  if ! __wait_for_checks "$pr_number"; then
-    echo "🛟 ... PR Checks had failures, retry once"
-    __retry_failed_jobs "$pr_number"
-    __sleep "💤 ... Waiting for jobs to start"
-    __wait_for_checks "$pr_number"
-  fi
-}
-
-__wait_for_checks() {
-  local pr_number="$1"
-  echo "🔎 ... waiting for checks to complete using gh pr checks"
-  gh pr checks "$pr_number" --watch --fail-fast --interval "$POLL_INTERVAL_SECS"
-}
-
-__approve_if_not_author() {
-  local pr_number="$1"
-  local pr_author=""
-  local me=""
-
-  me=$(gh_whoami)
-  pr_author="$(gh pr view "$pr_number" --json "author" | jq -r '.author.login')"
-  echo "ℹ️ PR Authored by $pr_author"
-  if [[ "$me" != "$pr_author" ]]; then
-    if ! gh pr review --approve "$pr_number"; then
-      echo "⚠️ Failed to approve, this might not matter. If it does then gh squash-merge should break..."
-    fi
-  else
-    echo "👀 Not going to try and approve your own PR!"
-  fi
-}
-
-__approve_then_merge() {
-  local pr_number="$1"
-  __approve_if_not_author "$pr_number"
-  gh squash-merge "$pr_number" "$(__bot_squash_merge_param "$pr_number")"
-}
-
-__dependabot_commenter() {
-  local pr_number="$1"
-  local max_retries=$GH_MERGE_TRAIN_MAX_ATTEMPTS
-  local dependabot_comment="@dependabot rebase"
-
-  if [[ "$GH_MERGE_TRAIN_DEPENDABOT_RECREATE" == "true" ]]; then
-    dependabot_comment="@dependabot recreate"
-  fi
-  echo "ℹ️ Update branch using $dependabot_comment"
-  if ! gh pr comment "$pr_number" --body "$dependabot_comment"; then
-    echo "⚠️ Failed to rebase via comment $dependabot_comment"
-    return 1
-  fi
-  while [[ ! $(__merge_status "$pr_number") =~ ^(CLEAN|BLOCKED)$ ]]; do
-    updateCount=$((updateCount + 1))
-    if [[ "$updateCount" -ge "$max_retries" ]]; then
-      echo -e "\n🚫 Branch update failed too many times"
-      return 1
-    else
-      __sleep "💤 Waiting on dependabot to catch up, $POLL_INTERVAL_SECS seconds..."
-    fi
-  done
-  return 0
-}
-
-__update_branch() {
-  local pr_number="$1"
-  local force_use_merge="$2"
-  local updateCount=0
-  local update_args=()
-  local dependabot_comment="@dependabot rebase"
-  local max_retries="$GH_MERGE_TRAIN_MAX_ATTEMPTS"
-
-  if [[ "$force_use_merge" == "true" ]]; then
-    max_retries=1
-  fi
-  if [[ "$force_use_merge" != "true" && ("$GH_MERGE_TRAIN_DEPENDABOT_REBASE" == "true" || "$GH_MERGE_TRAIN_DEPENDABOT_RECREATE" == "true") ]]; then
-    if __is_dependabot "$pr_number"; then
-      if ! __dependabot_commenter "$pr_number"; then
-        return 1
-      fi
-      return 0
-    fi
-  fi
-
-  if [[ "$GH_MERGE_TRAIN_REBASE" == "true" && "$force_use_merge" != "true" ]]; then
-    update_args+=("--rebase")
-  fi
-
-  #shellcheck disable=SC2145
-  echo "ℹ️ Update branch using gh pr update-branch $pr_number ${update_args[@]}"
-  while ! gh pr update-branch "$pr_number" "${update_args[@]}"; do
-    updateCount=$((updateCount + 1))
-    if [[ "$updateCount" -ge "$max_retries" ]]; then
-      echo -e "\n🚫 Branch update failed too many times"
-      return 1
-    else
-      __sleep "⚠️ Update failed. Retrying in $POLL_INTERVAL_SECS seconds..."
-    fi
-  done
-  return 0
-}
-
-__delete_entry() {
-  local file="$1"
-  local entry="$2"
-
-  sed -i "s#^$entry\$##g" "$file"
-  __delete_blank_lines "$file"
-}
-
-__delete_blank_lines() {
-  sed -i '/^$/d' "$file"
-}
-
-__process_entries_in() {
-  local file="$1"
-  local entry=""
+stack_or_merge() {
   local first="true"
+  local stack_num=""
+  local stack_or_pr
 
-  __delete_blank_lines "$file"
-  entry="$(head -n1 "$file")"
-  while [[ "$entry" != "" ]]; do
+  for stack_or_pr in "$@"; do
     if [[ "$first" != "true" ]]; then
-      __sleep "💤..."
-    fi
-    first=false
-    __merge_train "$entry"
-    __delete_entry "$file" "$entry"
-    entry="$(head -n1 "$file")"
-  done
-  # Delete empty files after processing.
-  # Edge case being that if the file was always empty, then it just gets deleted.
-  # I find this acceptable.
-  if [[ ! -s "$file" ]]; then
-    rm -f "$file"
-  fi
-}
-
-__merge_train() {
-  local first="true"
-
-  for pr in "$@"; do
-    if [[ "$first" != "true" ]]; then
-      __sleep "💤..."
+      wait_quietly "💤..."
     fi
     first="false"
-    url="$(__pr_view_field url "$pr")"
-    if [[ $(__pr_view_field state "$pr") == "MERGED" ]]; then
-      echo "ℹ️ Skipping $url already merged"
-      continue
-    fi
-    echo "ℹ️ Working on $url"
-    __label_if_bot "$pr"
-    if [[ ! $(__merge_status "$pr") =~ ^(CLEAN|BLOCKED)$ ]]; then
-      if ! __update_branch "$pr"; then
-        echo "⚠️ last attempt to merge"
-        if ! __update_branch "$pr" "true"; then
-          exit 1
-        fi
+    stack_num=$(__stack_get_stack_num "$stack_or_pr")
+    if [[ -n "$stack_num" ]]; then
+      if [[ "$GH_MERGE_TRAIN_STACK_SUPPORT" == "true" ]]; then
+        echo "🔎 stack#$stack_num wraps $stack_or_pr and stack-support enabled"
+        stack_merge "$stack_num"
+      else
+        echo "🔎 $stack_or_pr is part of a stack, stack-support not enabled"
       fi
-      # sad but sometimes the checks don't start quick enough
-      __sleep "💤... Waiting for checks to fire."
-    fi
-    if [[ "$GH_MERGE_TRAIN_RETRY_FAILED_JOBS" == "true" ]]; then
-      __wait_with_retry "$pr"
     else
-      __wait_for_checks "$pr"
+      merge_train "$stack_or_pr"
     fi
-    __approve_then_merge "$pr"
   done
 }
 
@@ -394,6 +125,7 @@ __merge_train() {
   while true; do
     case "${1}" in
     --merge | -m)
+      #shellcheck disable=SC2034
       GH_MERGE_TRAIN_REBASE="false"
       shift
       ;;
@@ -422,8 +154,8 @@ __merge_train() {
     fi
   fi
   if [[ -n "$inputfile" ]]; then
-    __process_entries_in "$inputfile"
+    process_entries_in "$inputfile"
   else
-    __merge_train "$@"
+    stack_or_merge "$@"
   fi
 }
