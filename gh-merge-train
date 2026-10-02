@@ -45,16 +45,18 @@ Usage: gh merge-train [flags] [pr...]
 
 This is a fake merge train that rebases, approves, and squash-merges each argument
 
-If no <pr> is supplied the PR for the current branch is used.
-Terminates with a warning if the current branch is the default branch.
+- If no <pr> is supplied the PR for the current branch is used
+  (based on 'GH_MERGE_TRAIN_CURRENT_BRANCH')
+- Terminates with a warning if the current branch is the default branch.
 
 In effect it takes some toil out of your life because we end up with this:
 
-gh-merge-train 25 26 27
+'gh merge-train 25 26 27' resolves to
+
 for PR in 25 26 27 do
   gh pr update-branch PR --rebase
   while in_progress do
-    gh pr checks PR --json "state,name" | jq -c ".[]" etc.
+    gh pr checks PR --watch
   done
   if success then
     gh pr review --approve PR
