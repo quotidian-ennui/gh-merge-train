@@ -22,19 +22,24 @@ Thus a fake merge-train was born. It's of marginal use if your actions are fast,
 ### Usage
 
 ```text
-bsh ❯ gh merge-train
+bsh ❯ gh merge-train --help
 
 Usage: gh merge-train [flags] [pr...]
 
 This is a fake merge train that rebases, approves, and squash-merges each argument
 
+- If no <pr> is supplied the PR for the current branch is used
+  (based on 'GH_MERGE_TRAIN_CURRENT_BRANCH')
+- Terminates with a warning if the current branch is the default branch.
+
 In effect it takes some toil out of your life because we end up with this:
 
-gh-merge-train 25 26 27
+'gh merge-train 25 26 27' resolves to
+
 for PR in 25 26 27 do
   gh pr update-branch PR --rebase
   while in_progress do
-    gh pr checks PR --json "state,name" | jq -c ".[]" etc.
+    gh pr checks PR --watch
   done
   if success then
     gh pr review --approve PR
@@ -47,12 +52,14 @@ Flags
   -i, --inputfile file containing a newline separated list of PR url/numbers to process
 
 env:
-  GH_POLL_INTERVAL_SECS             : interval between re-attempts            : [30]
-  GH_MERGE_TRAIN_MAX_ATTEMPTS       : how many times to attempt an update     : [4]
-  GH_MERGE_TRAIN_BOT_LABEL          : optional label to apply to a bot PR.    : []
-  GH_MERGE_TRAIN_DEPENDABOT_REBASE  : if 'true' use @dependabot rebase        : []
-  GH_MERGE_TRAIN_DEPENDABOT_RECREATE: if 'true' use @dependabot recreate      : []
-  GH_MERGE_TRAIN_RETRY_FAILED_JOBS  : Because you have flaky jobs for reasons : [false]
+  GH_POLL_INTERVAL_SECS             : interval between re-attempts              : [30]
+  GH_MERGE_TRAIN_MAX_ATTEMPTS       : how many times to attempt an update       : [4]
+  GH_MERGE_TRAIN_BOT_LABEL          : optional label to apply to a bot PR.      : []
+  GH_MERGE_TRAIN_DEPENDABOT_REBASE  : if 'true' use @dependabot rebase          : []
+  GH_MERGE_TRAIN_DEPENDABOT_RECREATE: if 'true' use @dependabot recreate        : []
+  GH_MERGE_TRAIN_RETRY_FAILED_JOBS  : Because you have flaky jobs for reasons   : [false]
+  GH_MERGE_TRAIN_CURRENT_BRANCH     : merge train the current branch if no args : [true]
+  GH_MERGE_TRAIN_STACK_SUPPORT      : experimental 'gh stack' support           : [false]
 ```
 
 #### Environment Variables
@@ -63,6 +70,7 @@ env:
 - `GH_MERGE_TRAIN_DEPENDABOT_REBASE` -> use `@dependabot rebase` when updating the PR; if it is a dependabot created PR.
 - `GH_MERGE_TRAIN_DEPENDABOT_RECREATE` -> use `@dependabot recreate` when updating the PR; if it is a dependabot created PR.
 - `GH_MERGE_TRAIN_RETRY_FAILED_JOBS` -> set to true to retry failed status checks in the PR once (and only once!)
+- `GH_MERGE_TRAIN_STACK_SUPPORT` -> set to true if you have installed `gh stack` and you want to do async merges (which is required for stack)
 
 ### Bonus Chatter
 
@@ -70,8 +78,18 @@ There are reasons for the `GH_MERGE_TRAIN_BOT_LABEL` and `GH_MERGE_TRAIN_DEPENDA
 
 `GH_MERGE_TRAIN_BOT_LABEL` is because we did not want dependabot to trigger expensive builds; we only want to run the expensive builds after we have reviewed the dependency before merging. Dependabot _can be quite eager_ about rebasing so this avoids a chain of expensive builds that run without our intervention.
 
-`GH_MERGE_TRAIN_DEPENDABOT_REBASE` | `GH_MERGE_TRAIN_DEPENDABOT_RECREATE` is because dependabot can do a _more appropriate thing_ when attempting to update a PR; it's subtly better than trying to do a `gh pr update-branch --rebase` in some use cases. If you are finding that, then setting this flag to be true will be your friend but you are going to be beholden to dependabot's scheduling.
+`GH_MERGE_TRAIN_DEPENDABOT_REBASE` | `GH_MERGE_TRAIN_DEPENDABOT_RECREATE` is because dependabot can do a _more appropriate thing_ when attempting to update a PR; it's subtly better than trying to do a `gh pr update-branch --rebase` in some use cases. If you are finding that, then setting this flag to be true will be your friend but you are going to be beholden to dependabot's scheduling. By default rebase is true if neither env-var is set.
 
 Note that right now (2026-03-13) there seems to be trouble with `gh pr update-branch --rebase` anyway (based on <https://github.com/orgs/community/discussions/189028>) so you might be better off always using the --merge flag.
 
 `GH_MERGE_TRAIN_RETRY_FAILED_JOBS` is because some projects appear to have flaky tests that don't always complete under the auspices of github. Setting this variable to be 'true' allows the failed jobs to be retried once via the `gh run rerun --job` command. It's intentional to only run once, if the tests are going to semi-reliably fail then it's indicative of a bigger problem anyway so you probably have some technical debt to fix the actions.
+
+`GH_MERGE_TRAIN_STACK_SUPPORT` is because stacks amuse me. What this does is that if you refer to a PR that is part of a stack AND your current directory is the repository where the stack is (e.g. you generally want to be using the form `gh merge-train 1234` rather than an URL) then we effectively do this:
+
+- `gh stack checkout [stack|pr]` - if you pass in a PR then the cli clever enough to figure out the stack.
+- ensure we have all the branches checked out (because rebase happens locally)
+- `gh stack rebase`
+- `gh stack push`
+- iterate over each PR in the stack using `gh squash-merge` in async mode (available as of <https://github.com/quotidian-ennui/gh-squash-merge/pull/129>) using the appropriate semantics.
+  - It isn't guaranteed it will go from the bottom to the top of the stack if you've modified your stack order since it is a little naive about that (this is kind of minimum lovable)
+  - failures to merge any part of the stack should be a hard-abort if you have a list of PRs in your train; much like always.
