@@ -2,7 +2,7 @@
 
 # Selects failed jobs from the status_rollup with some dodgy capturing
 # output to be {"runId":"24521981319","jobId":"71682061689"}
-JQ_FAILED_JOBS='.[] | select ( .conclusion=="FAILURE" ) | .detailsUrl | capture("/runs/(?<runId>[0-9]+)/job/(?<jobId>[0-9]+)")'
+readonly JQ_FAILED_JOBS='.[] | select ( .conclusion=="FAILURE" ) | .detailsUrl | capture("/runs/(?<runId>[0-9]+)/job/(?<jobId>[0-9]+)")'
 
 merge_train() {
   local pr="$1"
@@ -68,7 +68,6 @@ __merge_support_update_branch() {
   local force_use_merge="$2"
   local updateCount=0
   local update_args=()
-  local dependabot_comment="@dependabot rebase"
   local max_retries="$GH_MERGE_TRAIN_MAX_ATTEMPTS"
 
   if [[ "$force_use_merge" == "true" ]]; then

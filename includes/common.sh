@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-GH_REST_API_VERSION="X-GitHub-Api-Version: 2022-11-28"
-GH_ACCEPT="Accept: application/vnd.github+json"
+readonly GH_REST_API_VERSION="X-GitHub-Api-Version: 2026-03-10"
+readonly GH_ACCEPT="Accept: application/vnd.github+json"
 
 wait_quietly() {
   local msg="$1"
