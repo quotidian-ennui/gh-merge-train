@@ -14,20 +14,15 @@ __stack_checkout_stack() {
   local stack_number="$1"
   local stack_up_msg=""
 
-  if is_stack_open "$stack_number"; then
-    gh stack checkout "$stack_number"
-    gh stack bottom
-    # Can't rebase unless you have checked out each stack PR
-    # since it will try to use git under the covers.
-    while [[ "$stack_up_msg" != "Already at the top of the stack" ]]; do
-      stack_up_msg="$(gh stack up 2>&1)"
-    done
-    gh stack rebase
-    gh stack push
-    return 0
-  else
-    return 1
-  fi
+  gh stack checkout "$stack_number"
+  gh stack bottom
+  # Can't rebase unless you have checked out each stack PR
+  # since it will try to use git under the covers.
+  while [[ "$stack_up_msg" != "Already at the top of the stack" ]]; do
+    stack_up_msg="$(gh stack up 2>&1)"
+  done
+  gh stack rebase
+  gh stack push
 }
 
 gh_is_stack_open() {
