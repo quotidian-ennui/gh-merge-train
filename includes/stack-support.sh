@@ -14,18 +14,39 @@ __stack_checkout_stack() {
   local stack_number="$1"
   local stack_up_msg=""
 
-  gh stack checkout "$stack_number"
-  gh stack bottom
-  # Can't rebase unless you have checked out each stack PR
-  # since it will try to use git under the covers.
-  while [[ "$stack_up_msg" != "Already at the top of the stack" ]]; do
-    stack_up_msg="$(gh stack up 2>&1)"
-  done
-  gh stack rebase
-  gh stack push
+  if is_stack_open "$stack_number"; then
+    gh stack checkout "$stack_number"
+    gh stack bottom
+    # Can't rebase unless you have checked out each stack PR
+    # since it will try to use git under the covers.
+    while [[ "$stack_up_msg" != "Already at the top of the stack" ]]; do
+      stack_up_msg="$(gh stack up 2>&1)"
+    done
+    gh stack rebase
+    gh stack push
+    return 0
+  else
+    return 1
+  fi
 }
 
-__stack_get_stack_num() {
+gh_is_stack_open() {
+  local info="$1"
+  local open
+  open="$(echo "$info" | jq -r '.open')"
+  if [[ "$open" == "true" ]]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+gh_stack_info() {
+  local stack_number="$1"
+  gh_api "/repos/:owner/:repo/stacks/$stack_number"
+}
+
+gh_stack_get_stack_num() {
   local url="$1"
   local stack_num
   local url_re='^https?://github\.com/([^/]+)/([^/]+)/pull/([0-9]+)/?$'
@@ -64,23 +85,29 @@ stack_merge() {
   local prs_in_stack=()
   local pr
   local first="true"
+  local stack_info
 
-  __stack_checkout_stack "$stack_num"
-  mapfile -t prs_in_stack < <(__stack_create_pr_list_from_stack "$stack_num")
-  for pr in "${prs_in_stack[@]}"; do
-    url="$(gh_pr_view_field url "$pr")"
-    if [[ $(gh_pr_view_field state "$pr") == "MERGED" ]]; then
-      echo "ℹ️ Skipping $url already merged"
+  stack_info="$(gh_stack_info "$stack_num")"
+  if gh_is_stack_open "$stack_info"; then
+    __stack_checkout_stack "$stack_num"
+    mapfile -t prs_in_stack < <(__stack_create_pr_list_from_stack "$stack_num")
+    for pr in "${prs_in_stack[@]}"; do
+      url="$(gh_pr_view_field url "$pr")"
+      if [[ $(gh_pr_view_field state "$pr") == "MERGED" ]]; then
+        echo "ℹ️ Skipping $url already merged"
+        first="false"
+        continue
+      fi
+      if [[ "$first" != "true" ]]; then
+        wait_quietly "💤..."
+      fi
       first="false"
-      continue
-    fi
-    if [[ "$first" != "true" ]]; then
-      wait_quietly "💤..."
-    fi
-    first="false"
-    echo "ℹ️ Working on $url"
-    __label_if_bot "$pr"
-    gh_wait_for_checks "$pr"
-    gh_approve_then_merge "$pr" "true"
-  done
+      echo "ℹ️ Working on $url"
+      __label_if_bot "$pr"
+      gh_wait_for_checks "$pr"
+      gh_approve_then_merge "$pr" "true"
+    done
+  else
+    echo "🔎 stack#$stack_num is not open (all PRs merged?); skipping"
+  fi
 }

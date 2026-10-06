@@ -107,7 +107,7 @@ stack_or_merge() {
       wait_quietly "💤..."
     fi
     first="false"
-    stack_num=$(__stack_get_stack_num "$stack_or_pr")
+    stack_num=$(gh_stack_get_stack_num "$stack_or_pr")
     if [[ -n "$stack_num" ]]; then
       if [[ "$GH_MERGE_TRAIN_STACK_SUPPORT" == "true" ]]; then
         echo "🔎 stack#$stack_num wraps $stack_or_pr and stack-support enabled"
