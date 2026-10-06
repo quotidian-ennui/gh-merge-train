@@ -30,9 +30,36 @@ gh_approve_then_merge() {
   gh squash-merge "$pr_number" "${squash_merge_args[@]}"
 }
 
+__checks_pending() {
+  local pr_number="$1"
+  local error_file=""
+  local result=0
+  local retry_interval_secs=5
+
+  error_file=$(mktemp)
+  while true; do
+    if gh pr checks "$pr_number" --json name,bucket >/dev/null 2>"$error_file"; then
+      rm -f "$error_file"
+      return 0
+    else
+      result=$?
+    fi
+    if [[ "$result" -eq 1 ]] && grep -Fq "no checks reported" "$error_file"; then
+      echo "💤 ... no checks reported yet; retrying in ${retry_interval_secs}s"
+      sleep "$retry_interval_secs"
+    else
+      cat "$error_file" >&2
+      rm -f "$error_file"
+      return "$result"
+    fi
+  done
+}
+
 gh_wait_for_checks() {
   local pr_number="$1"
+
   echo "🔎 ... waiting for checks to complete using gh pr checks"
+  __checks_pending "$pr_number" || return $?
   gh pr checks "$pr_number" --watch --fail-fast --interval "$POLL_INTERVAL_SECS"
 }
 
