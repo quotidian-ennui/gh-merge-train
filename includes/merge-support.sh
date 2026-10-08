@@ -7,6 +7,7 @@ readonly JQ_FAILED_JOBS='.[] | select ( .conclusion=="FAILURE" ) | .detailsUrl |
 merge_train() {
   local pr="$1"
   local url
+  local isDraft=""
 
   url="$(gh_pr_view_field url "$pr")"
   if [[ $(gh_pr_view_field state "$pr") == "MERGED" ]]; then
@@ -14,23 +15,28 @@ merge_train() {
     return 0
   fi
   echo "ℹ️ Working on $url"
-  __label_if_bot "$pr"
-  if [[ ! $(__merge_support_merge_status "$pr") =~ ^(CLEAN|BLOCKED)$ ]]; then
-    if ! __merge_support_update_branch "$pr"; then
-      echo "⚠️ last attempt to merge"
-      if ! __merge_support_update_branch "$pr" "true"; then
-        return 1
+  isDraft="$(gh_pr_is_draft "$pr")"
+  if [[ "$isDraft" != "true" ]]; then
+    __label_if_bot "$pr"
+    if [[ ! $(__merge_support_merge_status "$pr") =~ ^(CLEAN|BLOCKED)$ ]]; then
+      if ! __merge_support_update_branch "$pr"; then
+        echo "⚠️ last attempt to merge"
+        if ! __merge_support_update_branch "$pr" "true"; then
+          return 1
+        fi
       fi
+      # sad but sometimes the checks don't start quick enough
+      wait_quietly "💤... Waiting for checks to fire."
     fi
-    # sad but sometimes the checks don't start quick enough
-    wait_quietly "💤... Waiting for checks to fire."
-  fi
-  if [[ "$GH_MERGE_TRAIN_RETRY_FAILED_JOBS" == "true" ]]; then
-    __merge_support_wait_with_retry "$pr"
+    if [[ "$GH_MERGE_TRAIN_RETRY_FAILED_JOBS" == "true" ]]; then
+      __merge_support_wait_with_retry "$pr"
+    else
+      gh_wait_for_checks "$pr"
+    fi
+    gh_approve_then_merge "$pr"
   else
-    gh_wait_for_checks "$pr"
+    echo "🔎 $pr is a DRAFT; skip"
   fi
-  gh_approve_then_merge "$pr"
 }
 
 __merge_support_dependabot_commenter() {

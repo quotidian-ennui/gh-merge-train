@@ -17,6 +17,10 @@ gh_pr_view_field() {
   gh pr view "$pr_number" --json "$field" --jq ".$field"
 }
 
+gh_pr_is_draft() {
+  gh_pr_view_field "isDraft" "$1"
+}
+
 gh_approve_then_merge() {
   local pr_number="$1"
   local async_mode="${2:-false}"
