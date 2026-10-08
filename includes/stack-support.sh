@@ -81,6 +81,7 @@ stack_merge() {
   local pr
   local first="true"
   local stack_info
+  local isDraft=""
 
   stack_info="$(gh_stack_info "$stack_num")"
   if gh_is_stack_open "$stack_info"; then
@@ -98,9 +99,15 @@ stack_merge() {
       fi
       first="false"
       echo "ℹ️ Working on $url"
-      __label_if_bot "$pr"
-      gh_wait_for_checks "$pr"
-      gh_approve_then_merge "$pr" "true"
+      isDraft="$(gh_pr_is_draft "$pr")"
+      if [[ "$isDraft" != "true" ]]; then
+        __label_if_bot "$pr"
+        gh_wait_for_checks "$pr"
+        gh_approve_then_merge "$pr" "true"
+      else
+        echo "🔎 $pr is a DRAFT; abort stack"
+        break
+      fi
     done
   else
     echo "🔎 stack#$stack_num is not open (all PRs merged?); skipping"
