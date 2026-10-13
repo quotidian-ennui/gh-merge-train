@@ -7,6 +7,7 @@ readonly JQ_FAILED_JOBS='.[] | select ( .conclusion=="FAILURE" ) | .detailsUrl |
 merge_train() {
   local pr="$1"
   local url
+  local repository
   local isDraft=""
 
   url="$(gh_pr_view_field url "$pr")"
@@ -29,7 +30,9 @@ merge_train() {
       wait_quietly "💤... Waiting for checks to fire."
     fi
     if [[ "$GH_MERGE_TRAIN_RETRY_FAILED_JOBS" == "true" ]]; then
-      __merge_support_wait_with_retry "$pr"
+      repository="${url#https://github.com/}"
+      repository="${repository%%/pull*}"
+      __merge_support_wait_with_retry "$pr" "$repository"
     else
       gh_wait_for_checks "$pr"
     fi
@@ -110,10 +113,11 @@ __merge_support_update_branch() {
 # After that, fail. Dev should fix your damned actions!
 __merge_support_wait_with_retry() {
   local pr_number="$1"
+  local repository="$2"
 
   if ! gh_wait_for_checks "$pr_number"; then
     echo "🛟 ... PR Checks had failures, retry once"
-    __merge_support_retry_failed_jobs "$pr_number"
+    __merge_support_retry_failed_jobs "$pr_number" "$repository"
     wait_quietly "💤 ... Waiting for jobs to start"
     gh_wait_for_checks "$pr_number"
   fi
@@ -121,6 +125,7 @@ __merge_support_wait_with_retry() {
 
 __merge_support_retry_failed_jobs() {
   local pr_number="$1"
+  local repository="$2"
   local runId
   local jobId
   local job_id_jsonlines=()
@@ -129,7 +134,7 @@ __merge_support_retry_failed_jobs() {
   for jsonline in "${job_id_jsonlines[@]}"; do
     runId=$(echo "$jsonline" | jq -r ".runId")
     jobId=$(echo "$jsonline" | jq -r ".jobId")
-    echo "🔎 ... Retry $jobId in $runId"
-    gh run rerun --job "$jobId"
+    echo "🔎 ... Retry $repository/actions/jobs/$jobId from $runId"
+    gh_api "/repos/$repository/actions/jobs/$jobId/rerun" --method POST
   done
 }
