@@ -82,7 +82,7 @@ There are reasons for the `GH_MERGE_TRAIN_BOT_LABEL` and `GH_MERGE_TRAIN_DEPENDA
 
 Note that right now (2026-03-13) there seems to be trouble with `gh pr update-branch --rebase` anyway (based on <https://github.com/orgs/community/discussions/189028>) so you might be better off always using the --merge flag.
 
-`GH_MERGE_TRAIN_RETRY_FAILED_JOBS` is because some projects appear to have flaky tests that don't always complete under the auspices of github. Setting this variable to be 'true' allows the failed jobs to be retried once via the `gh run rerun --job` command. It's intentional to only run once, if the tests are going to semi-reliably fail then it's indicative of a bigger problem anyway so you probably have some technical debt to fix the actions.
+`GH_MERGE_TRAIN_RETRY_FAILED_JOBS` is because some projects appear to have flaky tests that don't always complete under the auspices of github. Setting this variable to be 'true' allows the failed jobs to be retried once via 'gh api'. It's intentional to only run once, if the tests are going to semi-reliably fail then it's indicative of a bigger problem anyway so you probably have some technical debt to fix the actions.
 
 `GH_MERGE_TRAIN_STACK_SUPPORT` is because stacks amuse me. What this does is that if you refer to a PR that is part of a stack AND your current directory is the repository where the stack is (e.g. you generally want to be using the form `gh merge-train 1234` rather than an URL) then we effectively do this:
 
