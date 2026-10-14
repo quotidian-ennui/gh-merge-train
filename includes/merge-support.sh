@@ -9,6 +9,7 @@ merge_train() {
   local url
   local repository
   local isDraft=""
+  local is_dependabot_pr="false"
 
   url="$(gh_pr_view_field url "$pr")"
   if [[ $(gh_pr_view_field state "$pr") == "MERGED" ]]; then
@@ -17,18 +18,21 @@ merge_train() {
   fi
   echo "ℹ️ Working on $url"
   isDraft="$(gh_pr_is_draft "$pr")"
+  if gh_pr_by_dependabot "$pr_number"; then
+    is_dependabot_pr="true"
+  fi
   if [[ "$isDraft" != "true" ]]; then
-    __label_if_bot "$pr"
     if [[ ! $(__merge_support_merge_status "$pr") =~ ^(CLEAN|BLOCKED)$ ]]; then
-      if ! __merge_support_update_branch "$pr"; then
+      if ! __merge_support_update_branch "$pr" "$is_dependabot_pr"; then
         echo "⚠️ last attempt to merge"
-        if ! __merge_support_update_branch "$pr" "true"; then
+        if ! __merge_support_update_branch "$pr" "$is_dependabot_pr" "true"; then
           return 1
         fi
       fi
       # sad but sometimes the checks don't start quick enough
       wait_quietly "💤... Waiting for checks to fire."
     fi
+    __label_if_bot "$pr"
     if [[ "$GH_MERGE_TRAIN_RETRY_FAILED_JOBS" == "true" ]]; then
       repository="${url#https://github.com/}"
       repository="${repository%%/pull*}"
@@ -74,7 +78,8 @@ __merge_support_merge_status() {
 
 __merge_support_update_branch() {
   local pr_number="$1"
-  local force_use_merge="$2"
+  local is_dependabot="$2"
+  local force_use_merge="$3"
   local updateCount=0
   local update_args=()
   local max_retries="$GH_MERGE_TRAIN_MAX_ATTEMPTS"
@@ -82,7 +87,11 @@ __merge_support_update_branch() {
   if [[ "$force_use_merge" == "true" ]]; then
     max_retries=1
   fi
-  if [[ "$force_use_merge" != "true" && ("$GH_MERGE_TRAIN_DEPENDABOT_REBASE" == "true" || "$GH_MERGE_TRAIN_DEPENDABOT_RECREATE" == "true") ]]; then
+  if [[ "$force_use_merge" == "true" && "$is_dependabot" == "true" ]]; then
+    echo "⚠️ Dependabot clearly isn't working fast enough today; abort".
+    return 1
+  fi
+  if [[ "$force_use_merge" != "true" && "$is_dependabot" == "true" ]]; then
     if gh_pr_by_dependabot "$pr_number"; then
       if ! __merge_support_dependabot_commenter "$pr_number"; then
         return 1
