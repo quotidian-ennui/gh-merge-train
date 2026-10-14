@@ -92,12 +92,10 @@ __merge_support_update_branch() {
     return 1
   fi
   if [[ "$force_use_merge" != "true" && "$is_dependabot" == "true" ]]; then
-    if gh_pr_by_dependabot "$pr_number"; then
-      if ! __merge_support_dependabot_commenter "$pr_number"; then
-        return 1
-      fi
-      return 0
+    if ! __merge_support_dependabot_commenter "$pr_number"; then
+      return 1
     fi
+    return 0
   fi
 
   if [[ "$GH_MERGE_TRAIN_REBASE" == "true" && "$force_use_merge" != "true" ]]; then
