@@ -18,7 +18,8 @@ merge_train() {
   fi
   echo "ℹ️ Working on $url"
   isDraft="$(gh_pr_is_draft "$pr")"
-  if gh_pr_by_dependabot "$pr_number"; then
+  if gh_pr_by_dependabot "$pr"; then
+    echo "🔎 $pr is a dependabot PR"
     is_dependabot_pr="true"
   fi
   if [[ "$isDraft" != "true" ]]; then
@@ -97,7 +98,6 @@ __merge_support_update_branch() {
     fi
     return 0
   fi
-
   if [[ "$GH_MERGE_TRAIN_REBASE" == "true" && "$force_use_merge" != "true" ]]; then
     update_args+=("--rebase")
   fi
